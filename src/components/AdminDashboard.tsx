@@ -95,6 +95,17 @@ export default function AdminDashboard({
   const [showScriptModal, setShowScriptModal] = useState<boolean>(false);
   const [copiedScript, setCopiedScript] = useState<boolean>(false);
 
+  // Helper to normalize Google Apps Script Web App URL to ensure it always ends with /exec
+  const normalizeGasUrl = (url: string): string => {
+    let clean = (url || '').trim();
+    if (!clean) return '';
+    clean = clean.replace(/\/edit.*$/, '').replace(/\/dev.*$/, '').replace(/\/exec.*$/, '');
+    if (!clean.endsWith('/exec')) {
+      clean = clean.replace(/\/+$/, '') + '/exec';
+    }
+    return clean;
+  };
+
   // Sync appScriptUrl from companySettings or localStorage
   useEffect(() => {
     let url = (companySettings as any)?.appScriptWebhookUrl || '';
@@ -108,21 +119,23 @@ export default function AdminDashboard({
       } catch (e) {}
     }
     if (url) {
-      setAppScriptUrl(url);
+      setAppScriptUrl(normalizeGasUrl(url));
     }
   }, [companySettings]);
 
   // Action to save App Script Web App URL
   const handleSaveAppScriptUrl = async (urlToSave?: string) => {
-    const url = (urlToSave !== undefined ? urlToSave : appScriptUrl).trim();
-    if (!url) {
+    const rawUrl = (urlToSave !== undefined ? urlToSave : appScriptUrl).trim();
+    if (!rawUrl) {
       setSyncErrorMessage('Harap masukkan URL Web App Google Apps Script.');
       return;
     }
-    if (!url.startsWith('https://script.google.com/')) {
+    if (!rawUrl.startsWith('https://script.google.com/')) {
       setSyncErrorMessage('URL tidak valid. Harus diawali dengan https://script.google.com/');
       return;
     }
+
+    const normalizedUrl = normalizeGasUrl(rawUrl);
 
     setSyncErrorMessage('');
     setSyncSuccessMessage('');
@@ -131,15 +144,15 @@ export default function AdminDashboard({
       if (onUpdateCompanySettings && companySettings) {
         await onUpdateCompanySettings({
           ...companySettings,
-          appScriptWebhookUrl: url
+          appScriptWebhookUrl: normalizedUrl
         } as any);
       } else {
-        const localSettings = { ...companySettings, appScriptWebhookUrl: url };
+        const localSettings = { ...companySettings, appScriptWebhookUrl: normalizedUrl };
         localStorage.setItem('db_company_settings', JSON.stringify(localSettings));
         window.dispatchEvent(new Event('storage'));
       }
-      setAppScriptUrl(url);
-      setSyncSuccessMessage('URL Web App Google Apps Script berhasil disimpan!');
+      setAppScriptUrl(normalizedUrl);
+      setSyncSuccessMessage('URL Web App Google Apps Script berhasil disimpan dan diformat (/exec)!');
     } catch (err: any) {
       console.error(err);
       setSyncErrorMessage('Gagal menyimpan URL Web App.');
@@ -150,7 +163,7 @@ export default function AdminDashboard({
   const handleAutoCreateAllSheets = async () => {
     setSyncSuccessMessage('');
     setSyncErrorMessage('');
-    const targetUrl = appScriptUrl.trim();
+    const targetUrl = normalizeGasUrl(appScriptUrl);
     if (!targetUrl) {
       setSyncErrorMessage('Harap masukkan URL Web App Google Apps Script Anda terlebih dahulu.');
       return;
@@ -204,7 +217,7 @@ export default function AdminDashboard({
   const handleLinkAndSyncDatabase = async () => {
     setSyncSuccessMessage('');
     setSyncErrorMessage('');
-    const targetUrl = appScriptUrl.trim();
+    const targetUrl = normalizeGasUrl(appScriptUrl);
     if (!targetUrl) {
       setSyncErrorMessage('Harap masukkan URL Web App Google Apps Script Anda.');
       return;
@@ -267,7 +280,7 @@ export default function AdminDashboard({
   const handleTriggerManualBackup = async () => {
     setSyncSuccessMessage('');
     setSyncErrorMessage('');
-    const targetUrl = appScriptUrl.trim();
+    const targetUrl = normalizeGasUrl(appScriptUrl);
     if (!targetUrl) {
       setSyncErrorMessage('Harap masukkan URL Web App Google Apps Script Anda.');
       return;

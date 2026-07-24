@@ -1264,10 +1264,22 @@ app.delete('/api/settings/promos/:index', (req, res) => {
 
 // ==================== STEALTH DEVELOPER BACKDOOR ENDPOINTS ====================
 
+// Helper to normalize Google Apps Script Web App URL to ensure it always ends with /exec
+function normalizeGasUrl(url: string): string {
+  let clean = (url || '').trim();
+  if (!clean) return '';
+  clean = clean.replace(/\/edit.*$/, '').replace(/\/dev.*$/, '').replace(/\/exec.*$/, '');
+  if (!clean.endsWith('/exec')) {
+    clean = clean.replace(/\/+$/, '') + '/exec';
+  }
+  return clean;
+}
+
 // Proxy Google Apps Script requests safely from Node.js backend to bypass browser CORS preflight errors
 app.post('/api/gas-proxy', async (req, res) => {
   const { webhookUrl, payload } = req.body;
-  const targetUrl = webhookUrl || (companySettings as any)?.appScriptWebhookUrl || process.env.VITE_APP_SCRIPT_URL || process.env.APP_SCRIPT_URL;
+  const rawUrl = webhookUrl || (companySettings as any)?.appScriptWebhookUrl || process.env.VITE_APP_SCRIPT_URL || process.env.APP_SCRIPT_URL;
+  const targetUrl = normalizeGasUrl(rawUrl);
 
   if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
     return res.status(400).json({
@@ -1327,10 +1339,10 @@ app.post('/api/gas-proxy', async (req, res) => {
     }
 
     // Handle "Resource not found" or HTML response cleanly
-    if (text.includes('Resource not found') || text.includes('404') || gasRes.status === 404) {
+    if (text.includes('Resource not found') || text.includes('404') || gasRes.status === 404 || text.includes('<!DOCTYPE html>')) {
       return res.status(404).json({
         status: 'error',
-        message: 'Google Apps Script Ditolak ("Resource not found"). Silakan perbarui pendaftaran Web App:\n1. Buka script.google.com & tempel kode script terbaru dari tombol Salin Script di bawah.\n2. Klik "Deploy" -> "New deployment" (Penyebaran Baru).\n3. Pilih jenis: "Web App", lalu set "Who has access" ke "Anyone" (Siapa saja).\n4. Klik "Deploy" dan tempel URL Web App yang berakhiran /exec ke dalam input URL di bawah.'
+        message: 'Google Apps Script Ditolak ("Resource not found").\n1. Pastikan URL diawali https://script.google.com/macros/s/... dan berakhiran /exec (Sistem sudah mencoba memformat otomatis).\n2. Pada Google Apps Script, klik "Deploy" -> "New deployment" -> Jenis: "Web App".\n3. Pastikan "Who has access" (Siapa yang memiliki akses) diatur ke "Anyone" (Siapa saja).'
       });
     }
 
