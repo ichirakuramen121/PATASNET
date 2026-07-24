@@ -26,6 +26,7 @@ import {
   Eye,
   EyeOff,
   Save,
+  Activity,
   ChevronsLeft,
   ChevronsRight
 } from 'lucide-react';
@@ -276,6 +277,47 @@ export default function AdminDashboard({
     }
   };
 
+  // Action to ping / test connection to Google Apps Script
+  const handlePingConnection = async () => {
+    setSyncSuccessMessage('');
+    setSyncErrorMessage('');
+    const targetUrl = normalizeGasUrl(appScriptUrl);
+    if (!targetUrl) {
+      setSyncErrorMessage('Harap masukkan URL Web App Google Apps Script Anda.');
+      return;
+    }
+
+    setSyncLoading(true);
+    try {
+      const response = await fetch('/api/gas-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookUrl: targetUrl,
+          payload: { action: 'ping' }
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.status === 'success') {
+          setSyncSuccessMessage('Koneksi Google Apps Script SANGAT BAIK & Online! Web App Anda siap digunakan.');
+          await handleSaveAppScriptUrl(targetUrl);
+        } else {
+          setSyncErrorMessage('Web App merespons tetapi status tidak sukses: ' + (data.message || 'Error'));
+        }
+      } else {
+        const errData = await response.json();
+        setSyncErrorMessage(errData.message || `Web App menolak koneksi (Status: ${response.status}).`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setSyncErrorMessage(`Gagal melakukan tes koneksi: ${err.message || 'Periksa jaringan Anda.'}`);
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
   // Action to trigger manual backup to Google Spreadsheet
   const handleTriggerManualBackup = async () => {
     setSyncSuccessMessage('');
@@ -364,6 +406,14 @@ function doPost(e) {
 function handleAction(data) {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // Ping / connection test handler
+    if (data.action === "ping") {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "success",
+        message: "Koneksi Google Apps Script Aktif & Berhasil!"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
     
     // Direct upload handler to Google Drive for KTP photos, payment proofs, logos, and images
     if (data.action === "upload_file") {
@@ -2968,11 +3018,54 @@ function handleAction(data) {
             )}
 
             {syncErrorMessage && (
-              <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-800 flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-extrabold text-xs">Peringatan</p>
-                  <p className="text-xs font-medium">{syncErrorMessage}</p>
+              <div className="p-5 bg-red-50 border border-red-200 rounded-3xl text-red-900 space-y-3 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0 mt-0.5">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-extrabold text-sm text-red-900">Koneksi Google Apps Script Memerlukan Perhatian ("Resource not found")</h4>
+                    <p className="text-xs text-red-700 mt-1 leading-relaxed whitespace-pre-line">
+                      {syncErrorMessage}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Step by Step Fix Guide Box */}
+                <div className="p-4 bg-white rounded-2xl border border-red-200/80 space-y-3 text-xs text-slate-700">
+                  <p className="font-extrabold text-slate-800 flex items-center gap-1.5">
+                    <span>💡 Cara Mengatasi Error "Resource not found" (1 Menit):</span>
+                  </p>
+                  <ol className="list-decimal pl-4 space-y-2 font-medium leading-relaxed">
+                    <li>
+                      <strong>Salin Kode Script Terbaru:</strong> Klik tombol hitam <strong>"Salin Kode Script"</strong> di bawah untuk mendapatkan kode Apps Script versi terbaru.
+                    </li>
+                    <li>
+                      <strong>Buka Apps Script di Google Spreadsheet:</strong> Di Google Spreadsheet Anda, klik menu <strong>Extensions (Ekstensi)</strong> &rarr; <strong>Apps Script</strong>. Hapus isi lama dan tempel (Paste) kode yang telah disalin.
+                    </li>
+                    <li>
+                      <strong>Buat Deployment Web App Baru:</strong> Klik tombol <strong>Deploy (Penerapan)</strong> biru di pojok kanan atas &rarr; Pilih <strong>New deployment (Penerapan Baru)</strong>.
+                    </li>
+                    <li>
+                      <strong>Set Akses "Anyone" (Siapa Saja):</strong> Klik icon gerigi $\rightarrow$ Pilih <strong>Web app</strong>. Pada pilihan <strong>Who has access (Siapa yang memiliki akses)</strong>, Wajib pilih <span className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold">Anyone (Siapa saja)</span>.
+                    </li>
+                    <li>
+                      <strong>Salin & Tempel Web App URL Baru:</strong> Klik <strong>Deploy</strong>, izinkan akses akun Google, lalu salin Web App URL yang diberikan Google dan tempelkan ke kolom URL di bawah.
+                    </li>
+                  </ol>
+                  <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100">
+                    <span className="text-[11px] text-slate-500 font-medium">Langkah cepat: klik tombol di samping untuk menyalin script terbaru:</span>
+                    <button
+                      type="button"
+                      onClick={handleCopyAppsScriptCode}
+                      className={`px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${
+                        copiedScript ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      {copiedScript ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5" />}
+                      <span>{copiedScript ? 'Kode Terdisalin!' : 'Salin Kode Script'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -2993,7 +3086,7 @@ function handleAction(data) {
 
               <div className="space-y-2">
                 <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
-                  TEMPEL URL WEB APP (https://script.google.com/macros/s/...)
+                  TEMPEL URL WEB APP (https://script.google.com/macros/s/.../exec)
                 </label>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <input
@@ -3003,14 +3096,26 @@ function handleAction(data) {
                     placeholder="https://script.google.com/macros/s/AKfycbx.../exec"
                     className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-600 text-xs font-mono"
                   />
-                  <button
-                    type="button"
-                    onClick={() => handleSaveAppScriptUrl()}
-                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-md transition-all shrink-0 flex items-center justify-center gap-1.5 active:scale-95"
-                  >
-                    <Save className="w-4 h-4" />
-                    <span>Simpan & Connect</span>
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleSaveAppScriptUrl()}
+                      className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>Simpan URL</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePingConnection}
+                      disabled={syncLoading || !appScriptUrl}
+                      className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                      title="Uji koneksi ping ke Google Apps Script Web App"
+                    >
+                      {syncLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4 text-emerald-400" />}
+                      <span>Tes Koneksi</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
