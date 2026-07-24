@@ -25,6 +25,7 @@ import {
   FileText,
   Eye,
   EyeOff,
+  Save,
   ChevronsLeft,
   ChevronsRight
 } from 'lucide-react';
@@ -77,7 +78,7 @@ export default function AdminDashboard({
   packages = [],
   onRefreshPackages
 }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'customers' | 'payments' | 'tickets' | 'company_settings' | 'coverage' | 'packages'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'customers' | 'payments' | 'tickets' | 'company_settings' | 'coverage' | 'packages' | 'sheets_integration'>('overview');
   const [successToastMessage, setSuccessToastMessage] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -85,6 +86,664 @@ export default function AdminDashboard({
 
   const [sheetSyncState, setSheetSyncState] = useState<'idle' | 'syncing' | 'success'>('success');
   const [lastSyncTime, setLastSyncTime] = useState<string>('Baru saja');
+
+  // Google Sheets Integration states inside Admin Dashboard
+  const [appScriptUrl, setAppScriptUrl] = useState<string>('');
+  const [syncLoading, setSyncLoading] = useState<boolean>(false);
+  const [syncSuccessMessage, setSyncSuccessMessage] = useState<string>('');
+  const [syncErrorMessage, setSyncErrorMessage] = useState<string>('');
+  const [showScriptModal, setShowScriptModal] = useState<boolean>(false);
+  const [copiedScript, setCopiedScript] = useState<boolean>(false);
+
+  // Sync appScriptUrl from companySettings or localStorage
+  useEffect(() => {
+    let url = (companySettings as any)?.appScriptWebhookUrl || '';
+    if (!url) {
+      try {
+        const stored = localStorage.getItem('db_company_settings');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          url = parsed.appScriptWebhookUrl || '';
+        }
+      } catch (e) {}
+    }
+    if (url) {
+      setAppScriptUrl(url);
+    }
+  }, [companySettings]);
+
+  // Action to save App Script Web App URL
+  const handleSaveAppScriptUrl = async (urlToSave?: string) => {
+    const url = (urlToSave !== undefined ? urlToSave : appScriptUrl).trim();
+    if (!url) {
+      setSyncErrorMessage('Harap masukkan URL Web App Google Apps Script.');
+      return;
+    }
+    if (!url.startsWith('https://script.google.com/')) {
+      setSyncErrorMessage('URL tidak valid. Harus diawali dengan https://script.google.com/');
+      return;
+    }
+
+    setSyncErrorMessage('');
+    setSyncSuccessMessage('');
+
+    try {
+      if (onUpdateCompanySettings && companySettings) {
+        await onUpdateCompanySettings({
+          ...companySettings,
+          appScriptWebhookUrl: url
+        } as any);
+      } else {
+        const localSettings = { ...companySettings, appScriptWebhookUrl: url };
+        localStorage.setItem('db_company_settings', JSON.stringify(localSettings));
+        window.dispatchEvent(new Event('storage'));
+      }
+      setAppScriptUrl(url);
+      setSyncSuccessMessage('URL Web App Google Apps Script berhasil disimpan!');
+    } catch (err: any) {
+      console.error(err);
+      setSyncErrorMessage('Gagal menyimpan URL Web App.');
+    }
+  };
+
+  // Action to auto-create all sheets and header columns in Google Spreadsheet
+  const handleAutoCreateAllSheets = async () => {
+    setSyncSuccessMessage('');
+    setSyncErrorMessage('');
+    const targetUrl = appScriptUrl.trim();
+    if (!targetUrl) {
+      setSyncErrorMessage('Harap masukkan URL Web App Google Apps Script Anda terlebih dahulu.');
+      return;
+    }
+    if (!targetUrl.startsWith('https://script.google.com/')) {
+      setSyncErrorMessage('Format URL salah. Harus diawali dengan https://script.google.com/');
+      return;
+    }
+
+    setSyncLoading(true);
+    try {
+      const response = await fetch('/api/gas-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookUrl: targetUrl,
+          payload: {
+            action: 'setup',
+            companySettings: companySettings,
+            customers: customers,
+            tickets: supportTickets,
+            packages: packages,
+            coverage: coverageList,
+            testimonials: []
+          }
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.status === 'success') {
+          setSyncSuccessMessage(data.message || 'Seluruh sheet & kolom header BERHASIL dibuat dan diformat otomatis di Google Spreadsheet Anda!');
+          await handleSaveAppScriptUrl(targetUrl);
+          await onRefreshData();
+        } else {
+          setSyncErrorMessage('Gagal membuat sheet otomatis: ' + (data.message || 'Respons Apps Script tidak sukses.'));
+        }
+      } else {
+        const errData = await response.json();
+        setSyncErrorMessage(errData.message || `Koneksi ditolak (Status: ${response.status}). Pastikan Web App di-deploy dengan akses "Anyone" (Siapa saja).`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setSyncErrorMessage(`Gangguan koneksi: ${err.message || 'Periksa koneksi jaringan Anda.'}`);
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  // Action to pull database from Google Spreadsheet
+  const handleLinkAndSyncDatabase = async () => {
+    setSyncSuccessMessage('');
+    setSyncErrorMessage('');
+    const targetUrl = appScriptUrl.trim();
+    if (!targetUrl) {
+      setSyncErrorMessage('Harap masukkan URL Web App Google Apps Script Anda.');
+      return;
+    }
+
+    setSyncLoading(true);
+    try {
+      const response = await fetch('/api/gas-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookUrl: targetUrl,
+          payload: { action: 'load' }
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.status === 'success') {
+          if (data.companySettings) {
+            localStorage.setItem('db_company_settings', JSON.stringify(data.companySettings));
+          }
+          if (Array.isArray(data.customers)) {
+            localStorage.setItem('db_customers', JSON.stringify(data.customers));
+          }
+          if (Array.isArray(data.tickets)) {
+            localStorage.setItem('db_tickets', JSON.stringify(data.tickets));
+          }
+          if (Array.isArray(data.packages)) {
+            localStorage.setItem('db_packages', JSON.stringify(data.packages));
+          }
+          if (Array.isArray(data.coverage)) {
+            localStorage.setItem('db_coverage_areas', JSON.stringify(data.coverage));
+          }
+          if (Array.isArray(data.testimonials)) {
+            localStorage.setItem('db_testimonials', JSON.stringify(data.testimonials));
+          }
+
+          window.dispatchEvent(new Event('storage'));
+          setSyncSuccessMessage('Database Berhasil Sinkron! Seluruh data dari Google Spreadsheet berhasil dimuat.');
+          await handleSaveAppScriptUrl(targetUrl);
+          await onRefreshData();
+          if (onRefreshPackages) await onRefreshPackages();
+        } else {
+          setSyncErrorMessage('Gagal memuat data Google Sheets: ' + (data.message || 'Respons tidak sukses.'));
+        }
+      } else {
+        const errData = await response.json();
+        setSyncErrorMessage(errData.message || `Gagal menghubungkan (Status: ${response.status}).`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setSyncErrorMessage(`Gangguan koneksi: ${err.message || 'Periksa jaringan Anda.'}`);
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  // Action to trigger manual backup to Google Spreadsheet
+  const handleTriggerManualBackup = async () => {
+    setSyncSuccessMessage('');
+    setSyncErrorMessage('');
+    const targetUrl = appScriptUrl.trim();
+    if (!targetUrl) {
+      setSyncErrorMessage('Harap masukkan URL Web App Google Apps Script Anda.');
+      return;
+    }
+
+    setSyncLoading(true);
+    try {
+      const response = await fetch('/api/gas-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookUrl: targetUrl,
+          payload: {
+            action: 'backup',
+            timestamp: new Date().toISOString(),
+            companySettings: companySettings,
+            customers: customers,
+            tickets: supportTickets,
+            packages: packages,
+            coverage: coverageList,
+            testimonials: []
+          }
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.status === 'success') {
+          setSyncSuccessMessage('Berhasil mencadangkan seluruh data ke Google Spreadsheet!');
+          await handleSaveAppScriptUrl(targetUrl);
+        } else {
+          setSyncErrorMessage('Gagal melakukan pencadangan: ' + (data.message || 'Respons tidak sukses'));
+        }
+      } else {
+        const errData = await response.json();
+        setSyncErrorMessage(errData.message || `Koneksi ditolak (Status: ${response.status}).`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setSyncErrorMessage(`Gangguan pencadangan: ${err.message || 'Gangguan koneksi'}`);
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  // Copy Google Apps Script code snippet
+  const handleCopyAppsScriptCode = () => {
+    const scriptCode = `/**
+ * Google Apps Script Web App Template (Patasnet / Taranet WiFi)
+ * Copy and paste this code into Extensions -> Apps Script inside your Google Spreadsheet!
+ * This script will AUTOMATICALLY create all necessary sheets and columns on its first execution!
+ */
+
+function doGet(e) {
+  var data = {};
+  if (e && e.parameter) {
+    data = e.parameter;
+    if (e.parameter.payload) {
+      try { data = JSON.parse(e.parameter.payload); } catch(err) {}
+    }
+  }
+  if (!data.action) { data.action = "load"; }
+  return handleAction(data);
+}
+
+function doPost(e) {
+  var data = {};
+  try {
+    if (e && e.postData && e.postData.contents) {
+      data = JSON.parse(e.postData.contents);
+    }
+  } catch(err) {
+    data = {};
+  }
+  if (!data.action && e && e.parameter && e.parameter.action) {
+    data.action = e.parameter.action;
+  }
+  return handleAction(data);
+}
+
+function handleAction(data) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    
+    // Direct upload handler to Google Drive for KTP photos, payment proofs, logos, and images
+    if (data.action === "upload_file") {
+      try {
+        var folderName = data.folderName || "Patasnet_Drive_Uploads";
+        var folders = DriveApp.getFoldersByName(folderName);
+        var targetFolder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+        
+        var base64Raw = data.base64Data || "";
+        var contentType = "image/jpeg";
+        if (base64Raw.indexOf("data:") === 0) {
+          contentType = base64Raw.split(",")[0].split(":")[1].split(";")[0];
+          base64Raw = base64Raw.split(",")[1];
+        }
+        var decoded = Utilities.base64Decode(base64Raw);
+        var blob = Utilities.newBlob(decoded, contentType, data.fileName || ("file_" + Date.now() + ".jpg"));
+        
+        var file = targetFolder.createFile(blob);
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        
+        var fileId = file.getId();
+        var directUrl = "https://lh3.googleusercontent.com/d/" + fileId;
+        
+        return ContentService.createTextOutput(JSON.stringify({
+          status: "success",
+          message: "File berhasil diunggah ke Google Drive!",
+          fileUrl: directUrl,
+          fileId: fileId
+        })).setMimeType(ContentService.MimeType.JSON);
+      } catch (uploadErr) {
+        return ContentService.createTextOutput(JSON.stringify({
+          status: "error",
+          message: "Gagal mengunggah file ke Google Drive: " + uploadErr.toString()
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+
+    // Helper function to insert a sheet if missing and setup styling and headers
+    function getOrCreateSheet(name, headers) {
+      var sheet = ss.getSheetByName(name);
+      if (!sheet) {
+        sheet = ss.insertSheet(name);
+        sheet.appendRow(headers);
+        
+        // Format headers: bold, background slate, text white
+        var headerRange = sheet.getRange(1, 1, 1, headers.length);
+        headerRange.setFontWeight("bold");
+        headerRange.setBackground("#0f172a"); // slate-900
+        headerRange.setFontColor("#f8fafc");  // slate-50
+        sheet.setFrozenRows(1);
+      }
+      return sheet;
+    }
+
+    // Ensure all 7 master sheets exist
+    var sheetSettings = getOrCreateSheet("Pengaturan_Sistem", [
+      "Nama Perusahaan", "Alamat Kantor", "Teks Logo", "Warna Tema", "Tagline", "Tanggal Jatuh Tempo", "No Kontak Telepon", "Terakhir Diperbarui"
+    ]);
+    var sheetCustomers = getOrCreateSheet("Pelanggan", [
+      "ID Pelanggan", "Nama Lengkap", "Email", "Nomor Handphone", "Alamat Rumah", "Koordinat GPS", "ID Paket", "Status Akun", "Tanggal Daftar", "Tautan Foto KTP"
+    ]);
+    var sheetPayments = getOrCreateSheet("Tagihan_Pembayaran", [
+      "ID Pembayaran", "ID Pelanggan", "Nama Pelanggan", "Tanggal Transaksi", "Jumlah Rp", "Status", "Periode", "Metode", "ID Transaksi", "Tautan Bukti Bayar"
+    ]);
+    var sheetTickets = getOrCreateSheet("Tiket_Dukungan", [
+      "ID Tiket", "ID Pelanggan", "Nama Pengirim", "Email", "No Handphone", "Pesan Pengaduan", "Tanggal Pengaduan", "Status"
+    ]);
+    var sheetPackages = getOrCreateSheet("Paket_Internet", [
+      "ID Paket", "Nama Layanan", "Kecepatan", "Harga Bulanan Rp", "Kategori Tipe", "Daftar Fitur", "Rekomendasi Populer"
+    ]);
+    var sheetCoverage = getOrCreateSheet("Cakupan_Wilayah", [
+      "Nama Kota / Kabupaten", "Tipe Wilayah", "Total Kecamatan", "Total Kelurahan Tercover"
+    ]);
+    var sheetTestimonials = getOrCreateSheet("Testimoni_Pelanggan", [
+      "ID Testimoni", "Nama Pengulas", "Role / Paket", "Lokasi", "Rating Bintang", "Isi Ulasan", "Tag Kategori", "Tanggal"
+    ]);
+
+    if (data.action === "setup") {
+      var sheetsList = ss.getSheets();
+      sheetsList.forEach(function(sh) {
+        if (sh.getLastColumn() > 0) {
+          sh.autoResizeColumns(1, sh.getLastColumn());
+        }
+      });
+
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "success",
+        message: "Seluruh sheet (Pengaturan_Sistem, Pelanggan, Tagihan_Pembayaran, Tiket_Dukungan, Paket_Internet, Cakupan_Wilayah, Testimoni_Pelanggan) dan kolom header BERHASIL dibuat dan diformat otomatis!"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // Support retrieving the complete database to synchronize new devices
+    if (data.action === "load") {
+      var result = {
+        status: "success"
+      };
+      
+      // Read Pengaturan_Sistem
+      if (sheetSettings && sheetSettings.getLastRow() >= 2) {
+        var row = sheetSettings.getRange(2, 1, 1, 7).getValues()[0];
+        result.companySettings = {
+          name: row[0],
+          address: row[1],
+          logoText: row[2],
+          themeColor: row[3],
+          tagline: row[4],
+          billingDate: row[5],
+          contactPhone: row[6]
+        };
+      }
+      
+      // Read Pelanggan & Tagihan_Pembayaran
+      var customers = [];
+      if (sheetCustomers && sheetCustomers.getLastRow() >= 2) {
+        var rows = sheetCustomers.getRange(2, 1, sheetCustomers.getLastRow() - 1, 10).getValues();
+        rows.forEach(function(r) {
+          if (r[0]) {
+            var coords = [-6.2088, 106.8456];
+            if (r[5] && typeof r[5] === "string" && r[5].indexOf(",") > -1) {
+              var parts = r[5].split(",");
+              coords = [parseFloat(parts[0].trim()), parseFloat(parts[1].trim())];
+            }
+            customers.push({
+              id: String(r[0]),
+              name: String(r[1]),
+              email: String(r[2]),
+              phone: String(r[3]),
+              address: String(r[4]),
+              coordinates: coords,
+              packageId: String(r[6] || "home-50"),
+              status: String(r[7] || "pending"),
+              createdAt: String(r[8]),
+              ktpUrl: String(r[9] || ""),
+              payments: []
+            });
+          }
+        });
+      }
+      
+      if (sheetPayments && sheetPayments.getLastRow() >= 2) {
+        var pRows = sheetPayments.getRange(2, 1, sheetPayments.getLastRow() - 1, 10).getValues();
+        pRows.forEach(function(r) {
+          if (r[0] && r[1]) {
+            var cust = customers.find(function(c) { return c.id === String(r[1]); });
+            if (cust) {
+              cust.payments.push({
+                id: String(r[0]),
+                date: String(r[3]),
+                amount: Number(r[4] || 0),
+                status: String(r[5] || "paid"),
+                billingPeriod: String(r[6] || ""),
+                method: String(r[7] || "Transfer Bank"),
+                transactionId: String(r[8] || ""),
+                proofUrl: String(r[9] || "")
+              });
+            }
+          }
+        });
+      }
+      
+      result.customers = customers;
+      
+      // Read Tiket_Dukungan
+      var tickets = [];
+      if (sheetTickets && sheetTickets.getLastRow() >= 2) {
+        var tRows = sheetTickets.getRange(2, 1, sheetTickets.getLastRow() - 1, 8).getValues();
+        tRows.forEach(function(r) {
+          if (r[0]) {
+            tickets.push({
+              id: String(r[0]),
+              userId: String(r[1] || ""),
+              name: String(r[2] || ""),
+              email: String(r[3] || ""),
+              phone: String(r[4] || ""),
+              message: String(r[5] || ""),
+              date: String(r[6] || ""),
+              status: String(r[7] || "open")
+            });
+          }
+        });
+      }
+      result.tickets = tickets;
+      
+      // Read Paket_Internet
+      var packages = [];
+      if (sheetPackages && sheetPackages.getLastRow() >= 2) {
+        var pkgRows = sheetPackages.getRange(2, 1, sheetPackages.getLastRow() - 1, 7).getValues();
+        pkgRows.forEach(function(r) {
+          if (r[0]) {
+            packages.push({
+              id: String(r[0]),
+              name: String(r[1]),
+              speed: String(r[2]),
+              price: Number(r[3] || 0),
+              type: String(r[4] || "home"),
+              features: r[5] ? String(r[5]).split(", ") : [],
+              popular: Boolean(r[6])
+            });
+          }
+        });
+      }
+      result.packages = packages;
+      
+      // Read Cakupan_Wilayah
+      var coverage = [];
+      if (sheetCoverage && sheetCoverage.getLastRow() >= 2) {
+        var covRows = sheetCoverage.getRange(2, 1, sheetCoverage.getLastRow() - 1, 4).getValues();
+        covRows.forEach(function(r) {
+          if (r[0]) {
+            coverage.push({
+              cityName: String(r[0]),
+              regionType: String(r[1] || "Kota"),
+              totalKecamatans: Number(r[2] || 0),
+              totalKelurahans: Number(r[3] || 0)
+            });
+          }
+        });
+      }
+      result.coverage = coverage;
+      
+      // Read Testimoni_Pelanggan
+      var testimonials = [];
+      if (sheetTestimonials && sheetTestimonials.getLastRow() >= 2) {
+        var testiRows = sheetTestimonials.getRange(2, 1, sheetTestimonials.getLastRow() - 1, 8).getValues();
+        testiRows.forEach(function(r) {
+          if (r[0]) {
+            testimonials.push({
+              id: String(r[0]),
+              name: String(r[1]),
+              role: String(r[2]),
+              location: String(r[3]),
+              rating: Number(r[4] || 5),
+              comment: String(r[5]),
+              category: String(r[6]),
+              date: String(r[7])
+            });
+          }
+        });
+      }
+      result.testimonials = testimonials;
+
+      return ContentService.createTextOutput(JSON.stringify(result))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 1. SYSTEM CONFIGURATION SHEET
+    if (data.companySettings) {
+      if (sheetSettings.getLastRow() > 1) {
+        sheetSettings.deleteRows(2, sheetSettings.getLastRow() - 1);
+      }
+      sheetSettings.appendRow([
+        data.companySettings.name || "Patasnet Wifi",
+        data.companySettings.address || "",
+        data.companySettings.logoText || "PATAS wifi",
+        data.companySettings.themeColor || "#2563eb",
+        data.companySettings.tagline || "ULTRA BROADBAND",
+        data.companySettings.billingDate || 20,
+        data.companySettings.contactPhone || "+62 899-3299-977",
+        new Date().toISOString()
+      ]);
+    }
+    
+    // 2. CUSTOMER LIST & BILLING PAYMENTS
+    if (data.customers) {
+      if (sheetCustomers.getLastRow() > 1) {
+        sheetCustomers.deleteRows(2, sheetCustomers.getLastRow() - 1);
+      }
+      if (sheetPayments.getLastRow() > 1) {
+        sheetPayments.deleteRows(2, sheetPayments.getLastRow() - 1);
+      }
+      
+      data.customers.forEach(function(c) {
+        var coordStr = c.coordinates ? (c.coordinates[0] + ", " + c.coordinates[1]) : "-6.2088, 106.8456";
+        sheetCustomers.appendRow([
+          c.id,
+          c.name,
+          c.email,
+          c.phone,
+          c.address,
+          coordStr,
+          c.packageId,
+          c.status,
+          c.createdAt || new Date().toISOString(),
+          c.ktpUrl || ""
+        ]);
+        
+        if (c.payments && c.payments.length > 0) {
+          c.payments.forEach(function(p) {
+            sheetPayments.appendRow([
+              p.id,
+              c.id,
+              c.name,
+              p.date,
+              p.amount,
+              p.status,
+              p.billingPeriod || "",
+              p.method || "Transfer Bank",
+              p.transactionId || "",
+              p.proofUrl || ""
+            ]);
+          });
+        }
+      });
+    }
+    
+    // 3. SUPPORT TICKETS
+    if (data.tickets) {
+      if (sheetTickets.getLastRow() > 1) {
+        sheetTickets.deleteRows(2, sheetTickets.getLastRow() - 1);
+      }
+      data.tickets.forEach(function(t) {
+        sheetTickets.appendRow([
+          t.id,
+          t.userId || "",
+          t.name || "",
+          t.email || "",
+          t.phone || "",
+          t.message || "",
+          t.date || new Date().toISOString(),
+          t.status || "open"
+        ]);
+      });
+    }
+    
+    // 4. BROADBAND PACKAGES
+    if (data.packages) {
+      if (sheetPackages.getLastRow() > 1) {
+        sheetPackages.deleteRows(2, sheetPackages.getLastRow() - 1);
+      }
+      data.packages.forEach(function(pkg) {
+        sheetPackages.appendRow([
+          pkg.id,
+          pkg.name,
+          pkg.speed,
+          pkg.price,
+          pkg.type,
+          pkg.features ? pkg.features.join(", ") : "",
+          pkg.popular ? "Ya" : "Tidak"
+        ]);
+      });
+    }
+    
+    // 5. COVERAGE AREAS
+    if (data.coverage) {
+      if (sheetCoverage.getLastRow() > 1) {
+        sheetCoverage.deleteRows(2, sheetCoverage.getLastRow() - 1);
+      }
+      data.coverage.forEach(function(cov) {
+        sheetCoverage.appendRow([
+          cov.cityName,
+          cov.regionType || "Kota",
+          cov.totalKecamatans || 0,
+          cov.totalKelurahans || 0
+        ]);
+      });
+    }
+    
+    // 6. CUSTOMER TESTIMONIALS
+    if (data.testimonials) {
+      if (sheetTestimonials.getLastRow() > 1) {
+        sheetTestimonials.deleteRows(2, sheetTestimonials.getLastRow() - 1);
+      }
+      data.testimonials.forEach(function(testi) {
+        sheetTestimonials.appendRow([
+          testi.id,
+          testi.name,
+          testi.role,
+          testi.location,
+          testi.rating,
+          testi.comment,
+          testi.category,
+          testi.date
+        ]);
+      });
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "success",
+      message: "Data berhasil dicadangkan dan diperbarui ke Google Spreadsheet!"
+    })).setMimeType(ContentService.MimeType.JSON);
+
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "error",
+      message: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
+
+    navigator.clipboard.writeText(scriptCode);
+    setCopiedScript(true);
+    setTimeout(() => setCopiedScript(false), 3000);
+  };
 
   const performDatabaseSync = async (forceClearCache = false) => {
     setSheetSyncState('syncing');
@@ -1048,6 +1707,23 @@ export default function AdminDashboard({
               >
                 <MapPin className="w-4 h-4 shrink-0" />
                 <span>Kelola Area Cakupan</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('sheets_integration');
+                  if (window.innerWidth < 768) setShowSidebar(false);
+                }}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold transition-all text-left ${
+                  activeTab === 'sheets_integration'
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/15'
+                    : 'text-slate-600 hover:text-blue-600 hover:bg-blue-50/50'
+                }`}
+                title="Database & Google Sheets"
+              >
+                <Database className="w-4 h-4 shrink-0" />
+                <span>Database & Google Sheets</span>
               </button>
             </nav>
           </div>
@@ -2246,6 +2922,200 @@ export default function AdminDashboard({
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* TAB 8: GOOGLE SHEETS & DATABASE INTEGRATION */}
+        {activeTab === 'sheets_integration' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Top Banner */}
+            <div className="p-6 bg-gradient-to-br from-slate-900 via-slate-800 to-blue-950 text-white rounded-3xl shadow-xl space-y-3 relative overflow-hidden">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-500/20 text-blue-400 rounded-2xl flex items-center justify-center shrink-0 border border-blue-400/30">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-black tracking-tight">Integrasi Google Sheets & Database Cloud</h2>
+                  <p className="text-xs text-slate-300">
+                    Sambungkan sistem WiFi ke Google Spreadsheet untuk penyimpanan cloud permanen, pembuatan lembar kerja otomatis, dan pencadangan data.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Success or Error Alert Message */}
+            {syncSuccessMessage && (
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-800 flex items-start gap-3">
+                <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-extrabold text-xs">Berhasil!</p>
+                  <p className="text-xs font-medium">{syncSuccessMessage}</p>
+                </div>
+              </div>
+            )}
+
+            {syncErrorMessage && (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-800 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-extrabold text-xs">Peringatan</p>
+                  <p className="text-xs font-medium">{syncErrorMessage}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Connection URL Input Box */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-blue-600" />
+                  <h3 className="font-extrabold text-slate-800 text-sm">URL Web App Google Apps Script</h3>
+                </div>
+                <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
+                  appScriptUrl ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                }`}>
+                  {appScriptUrl ? 'URL Terhubung' : 'Belum Diatur'}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                  TEMPEL URL WEB APP (https://script.google.com/macros/s/...)
+                </label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="url"
+                    value={appScriptUrl}
+                    onChange={(e) => setAppScriptUrl(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/AKfycbx.../exec"
+                    className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-600 text-xs font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSaveAppScriptUrl()}
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-md transition-all shrink-0 flex items-center justify-center gap-1.5 active:scale-95"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>Simpan & Connect</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Database Action Grid (The 3 primary buttons) */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Button 1: Auto create sheets */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col justify-between gap-4">
+                <div className="space-y-2">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center font-black text-sm">
+                    1
+                  </div>
+                  <h4 className="font-extrabold text-slate-800 text-sm">Buat Semua Sheet Otomatis</h4>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Membuat & merapikan 7 lembar kerja (Pengaturan_Sistem, Pelanggan, Tagihan, Tiket, Paket, Cakupan, Testimoni) beserta header kolom warna biru/slate di Google Spreadsheet Anda.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAutoCreateAllSheets}
+                  disabled={syncLoading}
+                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 disabled:bg-slate-300 active:scale-95"
+                >
+                  {syncLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                  <span>1. Buat Semua Sheet Otomatis</span>
+                </button>
+              </div>
+
+              {/* Button 2: Pull spreadsheet data */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col justify-between gap-4">
+                <div className="space-y-2">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center font-black text-sm">
+                    2
+                  </div>
+                  <h4 className="font-extrabold text-slate-800 text-sm">Tarik Data Spreadsheet</h4>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Menarik ulang data paling baru dari Google Spreadsheet untuk menyinkronkan portal admin dengan perangkat/browser pelanggan lainnya.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleLinkAndSyncDatabase}
+                  disabled={syncLoading}
+                  className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 disabled:bg-slate-300 active:scale-95"
+                >
+                  {syncLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  <span>2. Tarik Data Spreadsheet</span>
+                </button>
+              </div>
+
+              {/* Button 3: Manual backup */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col justify-between gap-4">
+                <div className="space-y-2">
+                  <div className="w-10 h-10 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center font-black text-sm">
+                    3
+                  </div>
+                  <h4 className="font-extrabold text-slate-800 text-sm">Cadangkan Data Sekarang</h4>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Mengirimkan seluruh data saat ini (pelanggan, pembayaran, tiket gangguan, paket) ke Google Spreadsheet sebagai cadangan darurat.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleTriggerManualBackup}
+                  disabled={syncLoading}
+                  className="w-full py-2.5 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 disabled:bg-slate-300 active:scale-95"
+                >
+                  {syncLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                  <span>3. Cadangkan Data Sekarang</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Google Apps Script Code Exporter & Tutorial Card */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-blue-600" /> Script Google Apps Script (Kode Otomatis)
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Salin kode di bawah ini lalu tempel di Google Spreadsheet Anda (Extensions &rarr; Apps Script).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyAppsScriptCode}
+                  className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-2 shrink-0 ${
+                    copiedScript
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-900 text-white hover:bg-slate-800'
+                  }`}
+                >
+                  {copiedScript ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4" />}
+                  <span>{copiedScript ? 'Kode Berhasil Disalin!' : 'Salin Kode Apps Script'}</span>
+                </button>
+              </div>
+
+              {/* Instructions Steps */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-[11px]">
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
+                  <span className="font-black text-blue-600 text-xs">Langkah 1:</span>
+                  <p className="text-slate-600 font-medium">Buka Google Spreadsheet baru di browser Anda.</p>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
+                  <span className="font-black text-blue-600 text-xs">Langkah 2:</span>
+                  <p className="text-slate-600 font-medium">Klik menu <strong>Extensions</strong> &rarr; <strong>Apps Script</strong>.</p>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
+                  <span className="font-black text-blue-600 text-xs">Langkah 3:</span>
+                  <p className="text-slate-600 font-medium">Hapus semua isi lalu tempel (Paste) kode script di atas.</p>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
+                  <span className="font-black text-blue-600 text-xs">Langkah 4:</span>
+                  <p className="text-slate-600 font-medium">Klik <strong>Deploy</strong> &rarr; <strong>New deployment</strong> &rarr; Set Who has access = <strong>Anyone</strong> (Siapa saja).</p>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>

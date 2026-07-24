@@ -192,15 +192,14 @@ export default function Navbar({ currentUser, onLogout, onNavigate, currentPage,
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    if (isDeveloper) onNavigate('developer-dashboard');
-                    else if (isAdmin) onNavigate('admin-dashboard');
+                    if (isAdmin || isDeveloper) onNavigate('admin-dashboard');
                     else onNavigate('customer-dashboard');
                   }}
                   className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-[10px] sm:text-xs font-bold transition-all border border-blue-100"
                 >
                   <LayoutDashboard className="w-3.5 h-3.5" />
                   <span>
-                    {isDeveloper ? 'Dev' : isAdmin ? 'Admin' : `${customerUser?.name.split(' ')[0]}`}
+                    {isAdmin || isDeveloper ? 'Admin' : `${customerUser?.name.split(' ')[0]}`}
                   </span>
                 </button>
                 <button

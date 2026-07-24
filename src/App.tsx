@@ -6,7 +6,6 @@ import Home from './components/Home';
 import SubscriptionForm from './components/SubscriptionForm';
 import CustomerDashboard from './components/CustomerDashboard';
 import AdminDashboard from './components/AdminDashboard';
-import DeveloperDashboard from './components/DeveloperDashboard';
 import PrivacyPolicy from './components/PrivacyPolicy';
 import TermsConditions from './components/TermsConditions';
 import { CustomerUser, SupportTicket } from './types';
@@ -388,9 +387,7 @@ export default function App() {
         setLoginError('');
         setRegistrationSuccessUser(null);
 
-        if (data.user.isDeveloper) {
-          setCurrentPage('developer-dashboard');
-        } else if (data.user.isAdmin) {
+        if (data.user.isAdmin || data.user.isDeveloper) {
           setCurrentPage('admin-dashboard');
         } else {
           setCurrentPage('customer-dashboard');
@@ -457,15 +454,6 @@ export default function App() {
     setCurrentUser(null);
     setCurrentPage('home');
   };
-
-  if (currentPage === 'developer-dashboard') {
-    return (
-      <DeveloperDashboard
-        onLogout={handleLogout}
-        companyName={companySettings.name}
-      />
-    );
-  }
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 font-sans selection:bg-blue-500 selection:text-white">
