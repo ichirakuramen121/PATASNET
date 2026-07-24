@@ -378,9 +378,35 @@ export default function DeveloperDashboard({ onLogout, companyName }: DeveloperD
  * This script will AUTOMATICALLY create all necessary sheets and columns on its first execution!
  */
 
+function doGet(e) {
+  var data = {};
+  if (e && e.parameter) {
+    data = e.parameter;
+    if (e.parameter.payload) {
+      try { data = JSON.parse(e.parameter.payload); } catch(err) {}
+    }
+  }
+  if (!data.action) { data.action = "load"; }
+  return handleAction(data);
+}
+
 function doPost(e) {
+  var data = {};
   try {
-    var data = JSON.parse(e.postData.contents);
+    if (e && e.postData && e.postData.contents) {
+      data = JSON.parse(e.postData.contents);
+    }
+  } catch(err) {
+    data = {};
+  }
+  if (!data.action && e && e.parameter && e.parameter.action) {
+    data.action = e.parameter.action;
+  }
+  return handleAction(data);
+}
+
+function handleAction(data) {
+  try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     
     // Direct upload handler to Google Drive for KTP photos, payment proofs, logos, and images
@@ -419,6 +445,60 @@ function doPost(e) {
       }
     }
 
+    // Helper function to insert a sheet if missing and setup styling and headers
+    function getOrCreateSheet(name, headers) {
+      var sheet = ss.getSheetByName(name);
+      if (!sheet) {
+        sheet = ss.insertSheet(name);
+        sheet.appendRow(headers);
+        
+        // Format headers: bold, background slate, text white
+        var headerRange = sheet.getRange(1, 1, 1, headers.length);
+        headerRange.setFontWeight("bold");
+        headerRange.setBackground("#0f172a"); // slate-900
+        headerRange.setFontColor("#f8fafc");  // slate-50
+        sheet.setFrozenRows(1);
+      }
+      return sheet;
+    }
+
+    // Ensure all 7 master sheets exist
+    var sheetSettings = getOrCreateSheet("Pengaturan_Sistem", [
+      "Nama Perusahaan", "Alamat Kantor", "Teks Logo", "Warna Tema", "Tagline", "Tanggal Jatuh Tempo", "No Kontak Telepon", "Terakhir Diperbarui"
+    ]);
+    var sheetCustomers = getOrCreateSheet("Pelanggan", [
+      "ID Pelanggan", "Nama Lengkap", "Email", "Nomor Handphone", "Alamat Rumah", "Koordinat GPS", "ID Paket", "Status Akun", "Tanggal Daftar", "Tautan Foto KTP"
+    ]);
+    var sheetPayments = getOrCreateSheet("Tagihan_Pembayaran", [
+      "ID Pembayaran", "ID Pelanggan", "Nama Pelanggan", "Tanggal Transaksi", "Jumlah Rp", "Status", "Periode", "Metode", "ID Transaksi", "Tautan Bukti Bayar"
+    ]);
+    var sheetTickets = getOrCreateSheet("Tiket_Dukungan", [
+      "ID Tiket", "ID Pelanggan", "Nama Pengirim", "Email", "No Handphone", "Pesan Pengaduan", "Tanggal Pengaduan", "Status"
+    ]);
+    var sheetPackages = getOrCreateSheet("Paket_Internet", [
+      "ID Paket", "Nama Layanan", "Kecepatan", "Harga Bulanan Rp", "Kategori Tipe", "Daftar Fitur", "Rekomendasi Populer"
+    ]);
+    var sheetCoverage = getOrCreateSheet("Cakupan_Wilayah", [
+      "Nama Kota / Kabupaten", "Tipe Wilayah", "Total Kecamatan", "Total Kelurahan Tercover"
+    ]);
+    var sheetTestimonials = getOrCreateSheet("Testimoni_Pelanggan", [
+      "ID Testimoni", "Nama Pengulas", "Role / Paket", "Lokasi", "Rating Bintang", "Isi Ulasan", "Tag Kategori", "Tanggal"
+    ]);
+
+    if (data.action === "setup") {
+      var sheetsList = ss.getSheets();
+      sheetsList.forEach(function(sh) {
+        if (sh.getLastColumn() > 0) {
+          sh.autoResizeColumns(1, sh.getLastColumn());
+        }
+      });
+
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "success",
+        message: "Seluruh sheet (Pengaturan_Sistem, Pelanggan, Tagihan_Pembayaran, Tiket_Dukungan, Paket_Internet, Cakupan_Wilayah, Testimoni_Pelanggan) dan kolom header BERHASIL dibuat dan diformat otomatis!"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     // Support retrieving the complete database to synchronize new devices
     if (data.action === "load") {
       var result = {
@@ -427,7 +507,6 @@ function doPost(e) {
       };
       
       // Read Pengaturan_Sistem
-      var sheetSettings = ss.getSheetByName("Pengaturan_Sistem");
       if (sheetSettings && sheetSettings.getLastRow() >= 2) {
         var row = sheetSettings.getRange(2, 1, 1, 7).getValues()[0];
         result.companySettings = {
@@ -442,7 +521,6 @@ function doPost(e) {
       }
       
       // Read Pelanggan & Tagihan_Pembayaran
-      var sheetCustomers = ss.getSheetByName("Pelanggan");
       var customers = [];
       if (sheetCustomers && sheetCustomers.getLastRow() >= 2) {
         var rows = sheetCustomers.getRange(2, 1, sheetCustomers.getLastRow() - 1, 10).getValues();
@@ -470,7 +548,6 @@ function doPost(e) {
         });
       }
       
-      var sheetPayments = ss.getSheetByName("Tagihan_Pembayaran");
       if (sheetPayments && sheetPayments.getLastRow() >= 2) {
         var pRows = sheetPayments.getRange(2, 1, sheetPayments.getLastRow() - 1, 10).getValues();
         pRows.forEach(function(r) {
@@ -502,7 +579,6 @@ function doPost(e) {
       result.customers = customers;
       
       // Read Tiket_Dukungan
-      var sheetTickets = ss.getSheetByName("Tiket_Dukungan");
       var tickets = [];
       if (sheetTickets && sheetTickets.getLastRow() >= 2) {
         var tRows = sheetTickets.getRange(2, 1, sheetTickets.getLastRow() - 1, 8).getValues();
@@ -522,7 +598,6 @@ function doPost(e) {
       result.tickets = tickets;
       
       // Read Paket_Internet
-      var sheetPackages = ss.getSheetByName("Paket_Internet");
       var packages = [];
       if (sheetPackages && sheetPackages.getLastRow() >= 2) {
         var pkgRows = sheetPackages.getRange(2, 1, sheetPackages.getLastRow() - 1, 7).getValues();
@@ -541,7 +616,6 @@ function doPost(e) {
       result.packages = packages;
       
       // Read Cakupan_Wilayah
-      var sheetCoverage = ss.getSheetByName("Cakupan_Wilayah");
       var coverage = [];
       if (sheetCoverage && sheetCoverage.getLastRow() >= 2) {
         var covRows = sheetCoverage.getRange(2, 1, sheetCoverage.getLastRow() - 1, 4).getValues();
@@ -558,7 +632,6 @@ function doPost(e) {
       result.coverage = coverage;
       
       // Read Testimoni_Pelanggan
-      var sheetTestimonials = ss.getSheetByName("Testimoni_Pelanggan");
       var testimonials = [];
       if (sheetTestimonials && sheetTestimonials.getLastRow() >= 2) {
         var testiRows = sheetTestimonials.getRange(2, 1, sheetTestimonials.getLastRow() - 1, 8).getValues();
@@ -580,30 +653,9 @@ function doPost(e) {
       return ContentService.createTextOutput(JSON.stringify(result))
         .setMimeType(ContentService.MimeType.JSON);
     }
-    
-    // Helper function to insert a sheet if missing and setup styling and headers
-    function getOrCreateSheet(name, headers) {
-      var sheet = ss.getSheetByName(name);
-      if (!sheet) {
-        sheet = ss.insertSheet(name);
-        sheet.appendRow(headers);
-        
-        // Format headers: bold, background slate, text white
-        var headerRange = sheet.getRange(1, 1, 1, headers.length);
-        headerRange.setFontWeight("bold");
-        headerRange.setBackground("#0f172a"); // slate-900
-        headerRange.setFontColor("#f8fafc");  // slate-50
-        sheet.setFrozenRows(1);
-      }
-      return sheet;
-    }
-    
+
     // 1. SYSTEM CONFIGURATION SHEET
     if (data.companySettings) {
-      var sheetSettings = getOrCreateSheet("Pengaturan_Sistem", [
-        "Nama Perusahaan", "Alamat Kantor", "Teks Logo", "Warna Tema", "Tagline", "Tanggal Jatuh Tempo", "No Kontak Telepon", "Terakhir Diperbarui"
-      ]);
-      // Remove stale data, keep header
       if (sheetSettings.getLastRow() > 1) {
         sheetSettings.deleteRows(2, sheetSettings.getLastRow() - 1);
       }
@@ -622,13 +674,6 @@ function doPost(e) {
     
     // 2. CUSTOMER LIST & BILLING PAYMENTS
     if (data.customers) {
-      var sheetCustomers = getOrCreateSheet("Pelanggan", [
-        "ID Pelanggan", "Nama Lengkap", "Email", "Nomor Handphone", "Alamat Rumah", "Koordinat GPS", "ID Paket", "Status Akun", "Tanggal Daftar", "Tautan Foto KTP"
-      ]);
-      var sheetPayments = getOrCreateSheet("Tagihan_Pembayaran", [
-        "ID Pembayaran", "ID Pelanggan", "Nama Pelanggan", "Tanggal Transaksi", "Jumlah Rp", "Status", "Periode", "Metode", "ID Transaksi", "Tautan Bukti Bayar"
-      ]);
-      
       if (sheetCustomers.getLastRow() > 1) {
         sheetCustomers.deleteRows(2, sheetCustomers.getLastRow() - 1);
       }
@@ -671,9 +716,6 @@ function doPost(e) {
     
     // 3. SUPPORT TICKETS
     if (data.tickets) {
-      var sheetTickets = getOrCreateSheet("Tiket_Dukungan", [
-        "ID Tiket", "ID Pelanggan", "Nama Pengirim", "Email", "No Handphone", "Pesan Pengaduan", "Tanggal Pengaduan", "Status"
-      ]);
       if (sheetTickets.getLastRow() > 1) {
         sheetTickets.deleteRows(2, sheetTickets.getLastRow() - 1);
       }
@@ -693,9 +735,6 @@ function doPost(e) {
     
     // 4. BROADBAND PACKAGES
     if (data.packages) {
-      var sheetPackages = getOrCreateSheet("Paket_Internet", [
-        "ID Paket", "Nama Layanan", "Kecepatan", "Harga Bulanan Rp", "Kategori Tipe", "Daftar Fitur", "Rekomendasi Populer"
-      ]);
       if (sheetPackages.getLastRow() > 1) {
         sheetPackages.deleteRows(2, sheetPackages.getLastRow() - 1);
       }
@@ -714,9 +753,6 @@ function doPost(e) {
     
     // 5. COVERAGE AREAS
     if (data.coverage) {
-      var sheetCoverage = getOrCreateSheet("Cakupan_Wilayah", [
-        "Nama Kota / Kabupaten", "Tipe Wilayah", "Total Kecamatan", "Total Kelurahan Tercover"
-      ]);
       if (sheetCoverage.getLastRow() > 1) {
         sheetCoverage.deleteRows(2, sheetCoverage.getLastRow() - 1);
       }
@@ -732,9 +768,6 @@ function doPost(e) {
     
     // 6. CUSTOMER TESTIMONIALS
     if (data.testimonials) {
-      var sheetTestimonials = getOrCreateSheet("Testimoni_Pelanggan", [
-        "ID Testimoni", "Nama Pengulas", "Role / Paket", "Lokasi", "Rating Bintang", "Isi Ulasan", "Tag Kategori", "Tanggal"
-      ]);
       if (sheetTestimonials.getLastRow() > 1) {
         sheetTestimonials.deleteRows(2, sheetTestimonials.getLastRow() - 1);
       }
@@ -769,7 +802,7 @@ function doPost(e) {
         file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
         createdFileUrl = file.getUrl();
       } catch (driveErr) {
-        // Ignored or logged internally
+        // Ignored
       }
     }
     

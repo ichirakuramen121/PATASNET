@@ -1270,12 +1270,15 @@ app.post('/api/gas-proxy', async (req, res) => {
   const targetUrl = webhookUrl || (companySettings as any)?.appScriptWebhookUrl || process.env.VITE_APP_SCRIPT_URL || process.env.APP_SCRIPT_URL;
 
   if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
-    return res.status(400).json({ status: 'error', message: 'URL Web App Google Apps Script belum diisi atau tidak valid.' });
+    return res.status(400).json({
+      status: 'error',
+      message: 'URL Web App Google Apps Script belum diisi atau tidak valid. Silakan masukkan URL Web App Google Apps Script yang diawali dengan https://script.google.com/'
+    });
   }
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25000); // 25s timeout
+    const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
     const gasRes = await fetch(targetUrl, {
       method: 'POST',
@@ -1285,55 +1288,66 @@ app.post('/api/gas-proxy', async (req, res) => {
     });
     clearTimeout(timeout);
 
-    if (gasRes.ok) {
-      const text = await gasRes.text();
-      let data: any;
-      try {
-        data = JSON.parse(text);
-      } catch (pErr) {
-        data = { status: 'success', rawResponse: text };
-      }
+    const text = await gasRes.text();
+    let data: any = null;
+    try {
+      data = JSON.parse(text);
+    } catch (pErr) {
+      data = null;
+    }
 
+    if (gasRes.ok && data && data.status === 'success') {
       // If action was 'load' or 'setup', automatically merge restored database into server memory!
-      if (data && data.status === 'success') {
-        if (data.companySettings) {
-          companySettings = { ...data.companySettings, appScriptWebhookUrl: targetUrl };
-          saveSettings();
-        }
-        if (Array.isArray(data.customers)) {
-          customersList = data.customers;
-          saveCustomers();
-        }
-        if (Array.isArray(data.tickets)) {
-          supportTicketsList = data.tickets;
-          saveTickets();
-        }
-        if (Array.isArray(data.packages)) {
-          packagesList = data.packages;
-          savePackages();
-        }
-        if (Array.isArray(data.coverage)) {
-          coverageList = data.coverage;
-          saveCoverage();
-        }
-        if (Array.isArray(data.testimonials)) {
-          testimonialsList = data.testimonials;
-          saveTestimonials();
-        }
+      if (data.companySettings) {
+        companySettings = { ...data.companySettings, appScriptWebhookUrl: targetUrl };
+        saveSettings();
+      }
+      if (Array.isArray(data.customers)) {
+        customersList = data.customers;
+        saveCustomers();
+      }
+      if (Array.isArray(data.tickets)) {
+        supportTicketsList = data.tickets;
+        saveTickets();
+      }
+      if (Array.isArray(data.packages)) {
+        packagesList = data.packages;
+        savePackages();
+      }
+      if (Array.isArray(data.coverage)) {
+        coverageList = data.coverage;
+        saveCoverage();
+      }
+      if (Array.isArray(data.testimonials)) {
+        testimonialsList = data.testimonials;
+        saveTestimonials();
       }
 
       return res.json(data);
-    } else {
-      return res.status(gasRes.status).json({
+    }
+
+    // Handle "Resource not found" or HTML response cleanly
+    if (text.includes('Resource not found') || text.includes('404') || gasRes.status === 404) {
+      return res.status(404).json({
         status: 'error',
-        message: `Google Apps Script menolak koneksi (Status: ${gasRes.status}). Pastikan Web App di-deploy dengan akses "Anyone" (Siapa saja).`
+        message: 'Google Apps Script Ditolak ("Resource not found"). Silakan perbarui pendaftaran Web App:\n1. Buka script.google.com & tempel kode script terbaru dari tombol Salin Script di bawah.\n2. Klik "Deploy" -> "New deployment" (Penyebaran Baru).\n3. Pilih jenis: "Web App", lalu set "Who has access" ke "Anyone" (Siapa saja).\n4. Klik "Deploy" dan tempel URL Web App yang berakhiran /exec ke dalam input URL di bawah.'
       });
     }
+
+    if (data && data.message) {
+      return res.status(400).json(data);
+    }
+
+    return res.status(gasRes.status || 500).json({
+      status: 'error',
+      message: `Gagal memproses ke Google Apps Script (Status: ${gasRes.status}). ${text ? text.substring(0, 150) : ''}`
+    });
+
   } catch (err: any) {
     console.error('GAS Proxy Error:', err);
     return res.status(500).json({
       status: 'error',
-      message: `Gagal menghubungi Google Apps Script: ${err.message || 'Harap periksa URL atau koneksi internet Anda.'}`
+      message: `Gagal menghubungi Google Apps Script: ${err.message || 'Harap periksa URL Web App atau koneksi internet Anda.'}`
     });
   }
 });
