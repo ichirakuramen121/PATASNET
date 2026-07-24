@@ -1264,6 +1264,80 @@ app.delete('/api/settings/promos/:index', (req, res) => {
 
 // ==================== STEALTH DEVELOPER BACKDOOR ENDPOINTS ====================
 
+// Proxy Google Apps Script requests safely from Node.js backend to bypass browser CORS preflight errors
+app.post('/api/gas-proxy', async (req, res) => {
+  const { webhookUrl, payload } = req.body;
+  const targetUrl = webhookUrl || (companySettings as any)?.appScriptWebhookUrl || process.env.VITE_APP_SCRIPT_URL || process.env.APP_SCRIPT_URL;
+
+  if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
+    return res.status(400).json({ status: 'error', message: 'URL Web App Google Apps Script belum diisi atau tidak valid.' });
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000); // 25s timeout
+
+    const gasRes = await fetch(targetUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload || {}),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (gasRes.ok) {
+      const text = await gasRes.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch (pErr) {
+        data = { status: 'success', rawResponse: text };
+      }
+
+      // If action was 'load' or 'setup', automatically merge restored database into server memory!
+      if (data && data.status === 'success') {
+        if (data.companySettings) {
+          companySettings = { ...data.companySettings, appScriptWebhookUrl: targetUrl };
+          saveSettings();
+        }
+        if (Array.isArray(data.customers)) {
+          customersList = data.customers;
+          saveCustomers();
+        }
+        if (Array.isArray(data.tickets)) {
+          supportTicketsList = data.tickets;
+          saveTickets();
+        }
+        if (Array.isArray(data.packages)) {
+          packagesList = data.packages;
+          savePackages();
+        }
+        if (Array.isArray(data.coverage)) {
+          coverageList = data.coverage;
+          saveCoverage();
+        }
+        if (Array.isArray(data.testimonials)) {
+          testimonialsList = data.testimonials;
+          saveTestimonials();
+        }
+      }
+
+      return res.json(data);
+    } else {
+      return res.status(gasRes.status).json({
+        status: 'error',
+        message: `Google Apps Script menolak koneksi (Status: ${gasRes.status}). Pastikan Web App di-deploy dengan akses "Anyone" (Siapa saja).`
+      });
+    }
+  } catch (err: any) {
+    console.error('GAS Proxy Error:', err);
+    return res.status(500).json({
+      status: 'error',
+      message: `Gagal menghubungi Google Apps Script: ${err.message || 'Harap periksa URL atau koneksi internet Anda.'}`
+    });
+  }
+});
+
 // Get raw database states for developer view
 app.get('/api/dev/db', (req, res) => {
   res.json({

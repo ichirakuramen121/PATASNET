@@ -129,17 +129,20 @@ export default function DeveloperDashboard({ onLogout, companyName }: DeveloperD
 
     setSyncLoading(true);
     try {
-      const response = await fetch(appScriptUrl.trim(), {
+      const response = await fetch('/api/gas-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'setup',
-          companySettings: dbData?.companySettings || overrideSettings,
-          customers: dbData?.customers || [],
-          tickets: dbData?.tickets || [],
-          packages: dbData?.packages || [],
-          coverage: dbData?.coverageList || [],
-          testimonials: dbData?.testimonials || []
+          webhookUrl: appScriptUrl.trim(),
+          payload: {
+            action: 'setup',
+            companySettings: dbData?.companySettings || overrideSettings,
+            customers: dbData?.customers || [],
+            tickets: dbData?.tickets || [],
+            packages: dbData?.packages || [],
+            coverage: dbData?.coverageList || [],
+            testimonials: dbData?.testimonials || []
+          }
         })
       });
 
@@ -152,11 +155,72 @@ export default function DeveloperDashboard({ onLogout, companyName }: DeveloperD
           setSyncErrorMessage('Gagal membuat sheet otomatis: ' + (data.message || 'Respon Apps Script tidak sukses.'));
         }
       } else {
-        setSyncErrorMessage(`Koneksi ditolak (Status: ${response.status}). Pastikan Web App di-deploy dengan akses "Anyone".`);
+        const errData = await response.json();
+        setSyncErrorMessage(errData.message || `Koneksi ditolak (Status: ${response.status}). Pastikan Web App di-deploy dengan akses "Anyone".`);
       }
     } catch (err: any) {
       console.error(err);
       setSyncErrorMessage(`Gangguan koneksi: ${err.message || 'Periksa CORS atau koneksi jaringan Anda.'}`);
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  // Action to pull all data from Google Sheets
+  const handleLinkAndSyncDatabase = async () => {
+    setSyncSuccessMessage('');
+    setSyncErrorMessage('');
+    if (!appScriptUrl.trim()) {
+      setSyncErrorMessage('Harap masukkan URL Web App Google Apps Script Anda.');
+      return;
+    }
+
+    setSyncLoading(true);
+    try {
+      const response = await fetch('/api/gas-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookUrl: appScriptUrl.trim(),
+          payload: { action: 'load' }
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.status === 'success') {
+          if (data.companySettings) {
+            localStorage.setItem('db_company_settings', JSON.stringify(data.companySettings));
+          }
+          if (Array.isArray(data.customers)) {
+            localStorage.setItem('db_customers', JSON.stringify(data.customers));
+          }
+          if (Array.isArray(data.tickets)) {
+            localStorage.setItem('db_tickets', JSON.stringify(data.tickets));
+          }
+          if (Array.isArray(data.packages)) {
+            localStorage.setItem('db_packages', JSON.stringify(data.packages));
+          }
+          if (Array.isArray(data.coverage)) {
+            localStorage.setItem('db_coverage_areas', JSON.stringify(data.coverage));
+          }
+          if (Array.isArray(data.testimonials)) {
+            localStorage.setItem('db_testimonials', JSON.stringify(data.testimonials));
+          }
+
+          window.dispatchEvent(new Event('storage'));
+          setSyncSuccessMessage('Database Berhasil Sinkron! Seluruh data dari Google Spreadsheet berhasil dimuat.');
+          await fetchDatabase();
+        } else {
+          setSyncErrorMessage('Gagal memuat data Google Sheets: ' + (data.message || 'Respons tidak sukses.'));
+        }
+      } else {
+        const errData = await response.json();
+        setSyncErrorMessage(errData.message || `Gagal menghubungkan (Status: ${response.status}).`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setSyncErrorMessage(`Gangguan koneksi: ${err.message || 'Periksa jaringan Anda.'}`);
     } finally {
       setSyncLoading(false);
     }
@@ -173,18 +237,21 @@ export default function DeveloperDashboard({ onLogout, companyName }: DeveloperD
 
     setSyncLoading(true);
     try {
-      const response = await fetch(appScriptUrl.trim(), {
+      const response = await fetch('/api/gas-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'backup',
-          timestamp: new Date().toISOString(),
-          companySettings: dbData?.companySettings || overrideSettings,
-          customers: dbData?.customers || [],
-          tickets: dbData?.tickets || [],
-          packages: dbData?.packages || [],
-          coverage: dbData?.coverageList || [],
-          testimonials: dbData?.testimonials || []
+          webhookUrl: appScriptUrl.trim(),
+          payload: {
+            action: 'backup',
+            timestamp: new Date().toISOString(),
+            companySettings: dbData?.companySettings || overrideSettings,
+            customers: dbData?.customers || [],
+            tickets: dbData?.tickets || [],
+            packages: dbData?.packages || [],
+            coverage: dbData?.coverageList || [],
+            testimonials: dbData?.testimonials || []
+          }
         })
       });
 
@@ -196,7 +263,8 @@ export default function DeveloperDashboard({ onLogout, companyName }: DeveloperD
           setSyncErrorMessage('Gagal melakukan pencadangan: ' + (data.message || 'Respon tidak sukses'));
         }
       } else {
-        setSyncErrorMessage(`Koneksi ditolak (Status: ${response.status}).`);
+        const errData = await response.json();
+        setSyncErrorMessage(errData.message || `Koneksi ditolak (Status: ${response.status}).`);
       }
     } catch (err: any) {
       console.error(err);
@@ -300,106 +368,6 @@ export default function DeveloperDashboard({ onLogout, companyName }: DeveloperD
       setErrorMessage(err.message || 'Terjadi kesalahan sistem.');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleLinkAndSyncDatabase = async () => {
-    setSyncSuccessMessage('');
-    setSyncErrorMessage('');
-    if (!appScriptUrl.trim()) {
-      setSyncErrorMessage('Harap masukkan URL Web App Google Apps Script Anda.');
-      return;
-    }
-    if (!appScriptUrl.trim().startsWith('https://script.google.com/')) {
-      setSyncErrorMessage('Format URL salah. Harus diawali dengan https://script.google.com/');
-      return;
-    }
-
-    setSyncLoading(true);
-    try {
-      const response = await fetch(appScriptUrl.trim(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'load' })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data && data.status === 'success') {
-          // 1. Update localStorage
-          if (data.companySettings) {
-            const updatedSettings = { ...data.companySettings, appScriptWebhookUrl: appScriptUrl.trim() };
-            localStorage.setItem('db_company_settings', JSON.stringify(updatedSettings));
-          } else {
-            const fallbackSettings = { name: companyName, appScriptWebhookUrl: appScriptUrl.trim() };
-            localStorage.setItem('db_company_settings', JSON.stringify(fallbackSettings));
-          }
-          if (Array.isArray(data.customers)) {
-            localStorage.setItem('db_customers', JSON.stringify(data.customers));
-          }
-          if (Array.isArray(data.tickets)) {
-            localStorage.setItem('db_tickets', JSON.stringify(data.tickets));
-          }
-          if (Array.isArray(data.packages)) {
-            localStorage.setItem('db_packages', JSON.stringify(data.packages));
-          }
-          if (Array.isArray(data.coverage)) {
-            localStorage.setItem('db_coverage_areas', JSON.stringify(data.coverage));
-          }
-          if (Array.isArray(data.testimonials)) {
-            localStorage.setItem('db_testimonials', JSON.stringify(data.testimonials));
-          }
-
-          // 2. Sync to backend server
-          const saveBody: any = {};
-          if (data.companySettings) {
-            saveBody.settings = { ...data.companySettings, appScriptWebhookUrl: appScriptUrl.trim() };
-          } else {
-            saveBody.settings = { appScriptWebhookUrl: appScriptUrl.trim() };
-          }
-          if (Array.isArray(data.customers)) {
-            saveBody.customers = data.customers;
-          }
-          if (Array.isArray(data.tickets)) {
-            saveBody.tickets = data.tickets;
-          }
-          if (Array.isArray(data.packages)) {
-            saveBody.packages = data.packages;
-          }
-          if (Array.isArray(data.coverage)) {
-            saveBody.coverage = data.coverage;
-          }
-          if (Array.isArray(data.testimonials)) {
-            saveBody.testimonials = data.testimonials;
-          }
-
-          const saveRes = await fetch('/api/dev/db/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(saveBody)
-          });
-
-          if (!saveRes.ok) {
-            console.warn('Gagal menyimpan sinkronisasi ke server, tetapi local storage berhasil diperbarui.');
-          }
-
-          // Trigger local storage event to notify current active state
-          window.dispatchEvent(new Event('storage'));
-          setSyncSuccessMessage('Database Berhasil Sinkron! Seluruh pelanggan, tagihan, tiket, paket, cakupan wilayah, dan kustomisasi berhasil dimuat.');
-          
-          // Reload local states inside Developer Dashboard
-          await fetchDatabase();
-        } else {
-          setSyncErrorMessage('Google Sheets membalas dengan status tidak sukses. Periksa kembali script Anda.');
-        }
-      } else {
-        setSyncErrorMessage(`Koneksi ditolak oleh Google Apps Script (Status: ${response.status}). Pastikan Web App Anda di-deploy dengan akses "Anyone" (Siapa saja).`);
-      }
-    } catch (err: any) {
-      console.error(err);
-      setSyncErrorMessage(`Gagal menghubungi server database Google Sheets: ${err.message || 'Harap periksa CORS atau izin akses Web App Anda.'}`);
-    } finally {
-      setSyncLoading(false);
     }
   };
 

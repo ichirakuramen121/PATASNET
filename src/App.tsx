@@ -124,10 +124,13 @@ export default function App() {
 
     setSyncLoading(true);
     try {
-      const response = await fetch(syncUrlInput.trim(), {
+      const response = await fetch('/api/gas-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'load' })
+        body: JSON.stringify({
+          webhookUrl: syncUrlInput.trim(),
+          payload: { action: 'load' }
+        })
       });
 
       if (response.ok) {
