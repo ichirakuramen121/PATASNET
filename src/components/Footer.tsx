@@ -10,9 +10,10 @@ interface FooterProps {
   tagline?: string;
   companyAddress?: string;
   contactPhone?: string;
+  onOpenShareModal?: () => void;
 }
 
-export default function Footer({ onNavigate, companyName, logoUrl, tagline, companyAddress, contactPhone }: FooterProps) {
+export default function Footer({ onNavigate, companyName, logoUrl, tagline, companyAddress, contactPhone, onOpenShareModal }: FooterProps) {
   const [showCsModal, setShowCsModal] = useState(false);
   const [csMessage, setCsMessage] = useState('');
   const [csName, setCsName] = useState('');

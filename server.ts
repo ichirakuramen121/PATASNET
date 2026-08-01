@@ -862,7 +862,7 @@ app.get('/api/settings/company', (req, res) => {
 
 // Update company settings API
 app.post('/api/settings/company', async (req, res) => {
-  const { name, address, logoText, themeColor, logoUrl, tagline, billingDate, contactPhone } = req.body;
+  const { name, address, logoText, themeColor, logoUrl, tagline, billingDate, contactPhone, appScriptWebhookUrl } = req.body;
   if (name) companySettings.name = name;
   if (address) companySettings.address = address;
   if (logoText) companySettings.logoText = logoText;
@@ -880,6 +880,9 @@ app.post('/api/settings/company', async (req, res) => {
   if (tagline !== undefined) (companySettings as any).tagline = tagline;
   if (billingDate !== undefined) (companySettings as any).billingDate = parseInt(billingDate, 10) || 20;
   if (contactPhone !== undefined) (companySettings as any).contactPhone = contactPhone;
+  if (appScriptWebhookUrl !== undefined) {
+    (companySettings as any).appScriptWebhookUrl = normalizeGasUrl(appScriptWebhookUrl);
+  }
 
   saveSettings();
 

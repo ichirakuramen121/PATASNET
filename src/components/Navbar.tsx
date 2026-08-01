@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
-import { Wifi, LogIn, User, LayoutDashboard, LogOut, PhoneCall } from 'lucide-react';
+import { Wifi, LogIn, User, LayoutDashboard, LogOut, PhoneCall, Share2 } from 'lucide-react';
 import { CustomerUser } from '../types';
 import Logo from './Logo';
 
@@ -14,9 +14,10 @@ interface NavbarProps {
   tagline?: string;
   coverageStats?: { cities: number; kecamatans: number; kelurahans: number };
   contactPhone?: string;
+  onOpenShareModal?: () => void;
 }
 
-export default function Navbar({ currentUser, onLogout, onNavigate, currentPage, companyName, logoUrl, tagline, coverageStats, contactPhone }: NavbarProps) {
+export default function Navbar({ currentUser, onLogout, onNavigate, currentPage, companyName, logoUrl, tagline, coverageStats, contactPhone, onOpenShareModal }: NavbarProps) {
   const [activeItem, setActiveItem] = useState<string>('promosi');
   const isAdmin = currentUser && 'isAdmin' in currentUser && (currentUser as any).isAdmin;
   const isDeveloper = currentUser && 'isDeveloper' in currentUser && (currentUser as any).isDeveloper;
@@ -187,7 +188,7 @@ export default function Navbar({ currentUser, onLogout, onNavigate, currentPage,
           </nav>
 
           {/* Right Action buttons */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             {currentUser ? (
               <div className="flex items-center gap-2">
                 <button

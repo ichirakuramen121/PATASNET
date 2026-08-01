@@ -8,6 +8,7 @@ import CustomerDashboard from './components/CustomerDashboard';
 import AdminDashboard from './components/AdminDashboard';
 import PrivacyPolicy from './components/PrivacyPolicy';
 import TermsConditions from './components/TermsConditions';
+import ShareModal from './components/ShareModal';
 import { CustomerUser, SupportTicket } from './types';
 import { ShieldAlert, User, CheckCircle, Wifi, AlertCircle, Eye, EyeOff, Database, RefreshCw } from 'lucide-react';
 import { DEFAULT_COMPANY_SETTINGS } from './lib/defaultCompanySettings';
@@ -16,6 +17,7 @@ import { saveCompanySettingsToIDB, getCompanySettingsFromIDB } from './lib/idb';
 export default function App() {
   const [currentPage, setCurrentPage] = useState<string>('home');
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
+  const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
 
   // Company Branding settings
   const [companySettings, setCompanySettings] = useState<{
@@ -228,6 +230,21 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Parse deep link params for prospective customers (e.g. ?page=subscribe&pkg=home-20m)
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const pageParam = urlParams.get('page');
+      const pkgParam = urlParams.get('pkg');
+      if (pkgParam) {
+        setSelectedPackageId(pkgParam);
+      }
+      if (pageParam === 'subscribe' || pageParam === 'daftar') {
+        setCurrentPage('subscribe');
+      }
+    } catch (e) {
+      console.error('URL params parsing failed:', e);
+    }
+
     // Immediate hydration from IndexedDB for zero-flicker reload on any device
     getCompanySettingsFromIDB().then((cachedSettings) => {
       if (cachedSettings) {
@@ -741,6 +758,7 @@ export default function App() {
                 onUpdateCompanySettings={handleUpdateCompanySettings}
                 packages={packages}
                 onRefreshPackages={fetchPackages}
+                onOpenShareModal={() => setIsShareModalOpen(true)}
               />
             </motion.div>
           )}
@@ -786,6 +804,15 @@ export default function App() {
         tagline={companySettings.tagline}
         companyAddress={companySettings.address}
         contactPhone={companySettings.contactPhone}
+        onOpenShareModal={() => setIsShareModalOpen(true)}
+      />
+
+      {/* Share Link Modal for Prospective Customers */}
+      <ShareModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        companySettings={companySettings}
+        packages={packages}
       />
     </div>
   );

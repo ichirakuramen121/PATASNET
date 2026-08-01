@@ -27,6 +27,7 @@ import {
   EyeOff,
   Save,
   Activity,
+  Share2,
   ChevronsLeft,
   ChevronsRight
 } from 'lucide-react';
@@ -60,10 +61,11 @@ interface AdminDashboardProps {
   onVerifyPayment: (userId: string, paymentId: string) => Promise<void>;
   onRejectPayment?: (userId: string, paymentId: string) => Promise<void>;
   whatsappLogs?: any[];
-  companySettings?: { name: string; address: string; logoText: string; themeColor: string; logoUrl?: string; promos?: string[]; tagline?: string; billingDate?: number; contactPhone?: string };
-  onUpdateCompanySettings?: (newSettings: { name: string; address: string; logoText: string; themeColor: string; logoUrl?: string; tagline?: string; billingDate?: number; contactPhone?: string }) => Promise<boolean>;
+  companySettings?: { name: string; address: string; logoText: string; themeColor: string; logoUrl?: string; promos?: string[]; tagline?: string; billingDate?: number; contactPhone?: string; appScriptWebhookUrl?: string };
+  onUpdateCompanySettings?: (newSettings: { name: string; address: string; logoText: string; themeColor: string; logoUrl?: string; tagline?: string; billingDate?: number; contactPhone?: string; appScriptWebhookUrl?: string }) => Promise<boolean>;
   packages?: any[];
   onRefreshPackages?: () => void;
+  onOpenShareModal?: () => void;
 }
 
 export default function AdminDashboard({
@@ -77,7 +79,8 @@ export default function AdminDashboard({
   companySettings,
   onUpdateCompanySettings,
   packages = [],
-  onRefreshPackages
+  onRefreshPackages,
+  onOpenShareModal
 }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'customers' | 'payments' | 'tickets' | 'company_settings' | 'coverage' | 'packages' | 'sheets_integration'>('overview');
   const [successToastMessage, setSuccessToastMessage] = useState<string | null>(null);
@@ -2993,16 +2996,67 @@ function handleAction(data) {
           <div className="space-y-6 animate-in fade-in duration-300">
             {/* Top Banner */}
             <div className="p-6 bg-gradient-to-br from-slate-900 via-slate-800 to-blue-950 text-white rounded-3xl shadow-xl space-y-3 relative overflow-hidden">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-500/20 text-blue-400 rounded-2xl flex items-center justify-center shrink-0 border border-blue-400/30">
-                  <Database className="w-5 h-5" />
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-500/20 text-blue-400 rounded-2xl flex items-center justify-center shrink-0 border border-blue-400/30">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-black tracking-tight">Integrasi Google Sheets & Sinkronisasi Cloud</h2>
+                    <p className="text-xs text-slate-300">
+                      Sambungkan sistem WiFi ke Google Spreadsheet untuk penyimpanan cloud permanen & bagikan link yang tersinkron otomatis ke calon pelanggan.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="text-lg font-black tracking-tight">Integrasi Google Sheets & Database Cloud</h2>
-                  <p className="text-xs text-slate-300">
-                    Sambungkan sistem WiFi ke Google Spreadsheet untuk penyimpanan cloud permanen, pembuatan lembar kerja otomatis, dan pencadangan data.
-                  </p>
+
+                {onOpenShareModal && (
+                  <button
+                    type="button"
+                    onClick={onOpenShareModal}
+                    className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all flex items-center gap-2 shrink-0 active:scale-95"
+                  >
+                    <Share2 className="w-4 h-4" />
+                    <span>Bagikan Link & QR Code</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Public Synchronized Link Info Card */}
+            <div className="p-5 bg-gradient-to-r from-emerald-500/10 via-blue-500/10 to-indigo-500/10 border border-emerald-200/80 rounded-3xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping"></span>
+                  <h3 className="font-extrabold text-xs text-slate-900 uppercase tracking-wider">
+                    Link Pendaftaran Calon Pelanggan (100% Tersinkron Belakang Layar)
+                  </h3>
                 </div>
+                <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-800 font-black text-[10px] rounded-full uppercase">
+                  Siap Dibagikan
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                Setiap calon pelanggan yang membuka link website Anda dari HP, laptop, atau tablet mana pun akan langsung mendapatkan <strong>branding nama perusahaan, logo, paket internet, promo, dan formulir pendaftaran</strong> yang sama persis dan selalu tersinkronisasi di belakang layar secara real-time.
+              </p>
+
+              <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
+                <input
+                  type="text"
+                  readOnly
+                  value={window.location.origin}
+                  className="w-full sm:flex-1 px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-mono text-slate-700 shadow-inner"
+                />
+                {onOpenShareModal && (
+                  <button
+                    type="button"
+                    onClick={onOpenShareModal}
+                    className="w-full sm:w-auto px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 shrink-0 active:scale-95"
+                  >
+                    <Share2 className="w-4 h-4 text-emerald-400" />
+                    <span>Buka Opsi Bagikan & QR</span>
+                  </button>
+                )}
               </div>
             </div>
 
