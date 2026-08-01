@@ -542,8 +542,8 @@ export default function CustomerDashboard({ user, onRefreshUser, onLogout, compa
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white font-semibold text-xs text-slate-800"
                       >
                         <option value="qris">QRIS (OVO, GoPay, Dana, LinkAja - Instan)</option>
-                        <option value="bca">Transfer Bank BCA - 1234567890 a/n PT Amanusa</option>
-                        <option value="mandiri">Transfer Bank Mandiri - 9876543210 a/n PT Amanusa</option>
+                        <option value="bca">Transfer Bank BCA - 1234567890 a/n {companyName || 'Patas.Net'}</option>
+                        <option value="mandiri">Transfer Bank Mandiri - 9876543210 a/n {companyName || 'Patas.Net'}</option>
                         <option value="stripe">Kartu Kredit / Internasional (Stripe-secured)</option>
                         <option value="paypal">PayPal (internasional)</option>
                       </select>

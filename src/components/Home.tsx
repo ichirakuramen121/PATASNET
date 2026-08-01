@@ -274,7 +274,7 @@ export default function Home({ onSelectPackage, onNavigate, packages, companySet
                     PROMO MEI-JULI
                   </div>
                   <div className="text-right text-xs font-semibold text-slate-300">
-                    {replaceCompanyText('PT. AMANUSA TELEMEDIA', companySettings?.name)}
+                    {companySettings?.name || 'Patas.Net'}
                   </div>
                 </div>
 

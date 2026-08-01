@@ -107,7 +107,7 @@ Daerah Khusus Ibukota Jakarta 12180`}
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-12 pt-6 border-t border-slate-800 text-center text-xs text-slate-500 flex flex-col md:flex-row justify-between items-center gap-4">
-        <p className="order-2 md:order-1 text-[11px] sm:text-xs">Copyright © 2026 PT. AMANUSA TELEMEDIA MAHARDHIKA. All Right Reserved</p>
+        <p className="order-2 md:order-1 text-[11px] sm:text-xs">Copyright © 2026 {companyName || 'Patas.Net'}. All Right Reserved</p>
         <div className="order-1 md:order-2 flex flex-wrap justify-center items-center gap-x-3 gap-y-2 sm:gap-x-4">
           <button 
             onClick={() => onNavigate('privacy-policy')} 

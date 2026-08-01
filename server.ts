@@ -1278,29 +1278,71 @@ function normalizeGasUrl(url: string): string {
   return clean;
 }
 
-// Proxy Google Apps Script requests safely from Node.js backend to bypass browser CORS preflight errors
-app.post('/api/gas-proxy', async (req, res) => {
-  const { webhookUrl, payload } = req.body;
-  const rawUrl = webhookUrl || (companySettings as any)?.appScriptWebhookUrl || process.env.VITE_APP_SCRIPT_URL || process.env.APP_SCRIPT_URL;
+// Master helper to send requests to Google Apps Script Web App without CORS or 302 redirect payload drops
+async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 35000) {
   const targetUrl = normalizeGasUrl(rawUrl);
-
   if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
-    return res.status(400).json({
-      status: 'error',
-      message: 'URL Web App Google Apps Script belum diisi atau tidak valid. Silakan masukkan URL Web App Google Apps Script yang diawali dengan https://script.google.com/'
-    });
+    return {
+      ok: false,
+      status: 400,
+      text: '',
+      data: { status: 'error', message: 'URL Web App Google Apps Script belum diisi atau tidak valid (harus diawali https://script.google.com/).' },
+      targetUrl: ''
+    };
+  }
+
+  const payloadJson = JSON.stringify(payload || {});
+  const actionName = payload?.action || '';
+
+  // Append action & payload to query string as fallback so that even if fetch converts 302 POST -> GET during redirect,
+  // doGet(e) in Apps Script STILL receives e.parameter.action and e.parameter.payload!
+  let urlWithQuery = targetUrl;
+  const queryParts: string[] = [];
+  if (actionName) {
+    queryParts.push(`action=${encodeURIComponent(actionName)}`);
+  }
+  if (payloadJson.length < 12000) {
+    queryParts.push(`payload=${encodeURIComponent(payloadJson)}`);
+  }
+  if (queryParts.length > 0) {
+    urlWithQuery += (targetUrl.includes('?') ? '&' : '?') + queryParts.join('&');
   }
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    const gasRes = await fetch(targetUrl, {
+    // Attempt 1: Manual redirect handling to catch the 302/307 location header and POST directly to it
+    let gasRes = await fetch(urlWithQuery, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload || {}),
+      body: payloadJson,
+      redirect: 'manual',
       signal: controller.signal
     });
+
+    if ([301, 302, 303, 307, 308].includes(gasRes.status)) {
+      const redirectLocation = gasRes.headers.get('location');
+      if (redirectLocation) {
+        // Send POST directly to the redirected location URL
+        gasRes = await fetch(redirectLocation, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: payloadJson,
+          signal: controller.signal
+        });
+      } else {
+        // Fallback with redirect follow
+        gasRes = await fetch(urlWithQuery, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: payloadJson,
+          redirect: 'follow',
+          signal: controller.signal
+        });
+      }
+    }
+
     clearTimeout(timeout);
 
     const text = await gasRes.text();
@@ -1311,60 +1353,81 @@ app.post('/api/gas-proxy', async (req, res) => {
       data = null;
     }
 
-    if (gasRes.ok && data && data.status === 'success') {
-      // If action was 'load' or 'setup', automatically merge restored database into server memory!
-      if (data.companySettings) {
-        companySettings = { ...data.companySettings, appScriptWebhookUrl: targetUrl };
-        saveSettings();
-      }
-      if (Array.isArray(data.customers)) {
-        customersList = data.customers;
-        saveCustomers();
-      }
-      if (Array.isArray(data.tickets)) {
-        supportTicketsList = data.tickets;
-        saveTickets();
-      }
-      if (Array.isArray(data.packages)) {
-        packagesList = data.packages;
-        savePackages();
-      }
-      if (Array.isArray(data.coverage)) {
-        coverageList = data.coverage;
-        saveCoverage();
-      }
-      if (Array.isArray(data.testimonials)) {
-        testimonialsList = data.testimonials;
-        saveTestimonials();
-      }
+    const isSuccess = gasRes.ok && (data?.status === 'success' || (data && !data.error));
 
-      return res.json(data);
-    }
-
-    // Handle "Resource not found" or HTML response cleanly
-    if (text.includes('Resource not found') || text.includes('404') || gasRes.status === 404 || text.includes('<!DOCTYPE html>')) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Google Apps Script Ditolak ("Resource not found").\n1. Pastikan URL diawali https://script.google.com/macros/s/... dan berakhiran /exec (Sistem sudah mencoba memformat otomatis).\n2. Pada Google Apps Script, klik "Deploy" -> "New deployment" -> Jenis: "Web App".\n3. Pastikan "Who has access" (Siapa yang memiliki akses) diatur ke "Anyone" (Siapa saja).'
-      });
-    }
-
-    if (data && data.message) {
-      return res.status(400).json(data);
-    }
-
-    return res.status(gasRes.status || 500).json({
-      status: 'error',
-      message: `Gagal memproses ke Google Apps Script (Status: ${gasRes.status}). ${text ? text.substring(0, 150) : ''}`
-    });
-
+    return {
+      ok: isSuccess,
+      status: gasRes.status,
+      text,
+      data,
+      targetUrl
+    };
   } catch (err: any) {
-    console.error('GAS Proxy Error:', err);
-    return res.status(500).json({
+    console.error('sendToGoogleAppsScript Error:', err);
+    return {
+      ok: false,
+      status: 500,
+      text: err.message || '',
+      data: { status: 'error', message: err.message || 'Gagal menghubungi Google Apps Script.' },
+      targetUrl
+    };
+  }
+}
+
+// Proxy Google Apps Script requests safely from Node.js backend to bypass browser CORS preflight errors
+app.post('/api/gas-proxy', async (req, res) => {
+  const { webhookUrl, payload } = req.body;
+  const rawUrl = webhookUrl || (companySettings as any)?.appScriptWebhookUrl || process.env.VITE_APP_SCRIPT_URL || process.env.APP_SCRIPT_URL;
+
+  const result = await sendToGoogleAppsScript(rawUrl, payload, 35000);
+
+  if (result.ok && result.data) {
+    // If action was 'load' or 'setup', automatically merge restored database into server memory!
+    if (result.data.companySettings) {
+      companySettings = { ...result.data.companySettings, appScriptWebhookUrl: result.targetUrl };
+      saveSettings();
+    }
+    if (Array.isArray(result.data.customers)) {
+      customersList = result.data.customers;
+      saveCustomers();
+    }
+    if (Array.isArray(result.data.tickets)) {
+      supportTicketsList = result.data.tickets;
+      saveTickets();
+    }
+    if (Array.isArray(result.data.packages)) {
+      packagesList = result.data.packages;
+      savePackages();
+    }
+    if (Array.isArray(result.data.coverage)) {
+      coverageList = result.data.coverage;
+      saveCoverage();
+    }
+    if (Array.isArray(result.data.testimonials)) {
+      testimonialsList = result.data.testimonials;
+      saveTestimonials();
+    }
+
+    return res.json(result.data);
+  }
+
+  // Handle "Resource not found" or HTML response cleanly
+  const text = result.text || '';
+  if (text.includes('Resource not found') || text.includes('404') || result.status === 404 || text.includes('<!DOCTYPE html>')) {
+    return res.status(404).json({
       status: 'error',
-      message: `Gagal menghubungi Google Apps Script: ${err.message || 'Harap periksa URL Web App atau koneksi internet Anda.'}`
+      message: 'Google Apps Script Ditolak ("Resource not found").\n1. Pada Google Apps Script, klik "Deploy" -> "New deployment" (Penerapan Baru) -> Jenis: "Web app".\n2. Wajib atur "Who has access" (Siapa yang memiliki akses) menjadi "Anyone" (Siapa saja).\n3. Pastikan sudah menyalin kode script terbaru dari tombol "Salin Kode Script" di dashboard admin.'
     });
   }
+
+  if (result.data && result.data.message) {
+    return res.status(result.status < 400 ? 400 : result.status).json(result.data);
+  }
+
+  return res.status(result.status || 500).json({
+    status: 'error',
+    message: `Gagal memproses ke Google Apps Script (Status: ${result.status}). ${text ? text.substring(0, 150) : ''}`
+  });
 });
 
 // Get raw database states for developer view

@@ -384,10 +384,16 @@ function doGet(e) {
   if (e && e.parameter) {
     data = e.parameter;
     if (e.parameter.payload) {
-      try { data = JSON.parse(e.parameter.payload); } catch(err) {}
+      try {
+        if (typeof e.parameter.payload === 'string') {
+          data = JSON.parse(e.parameter.payload);
+        } else {
+          data = e.parameter.payload;
+        }
+      } catch(err) {}
     }
   }
-  if (!data.action) { data.action = "load"; }
+  if (!data || !data.action) { data = { action: "ping" }; }
   return handleAction(data);
 }
 
@@ -400,9 +406,19 @@ function doPost(e) {
   } catch(err) {
     data = {};
   }
-  if (!data.action && e && e.parameter && e.parameter.action) {
+  if ((!data || !data.action) && e && e.parameter && e.parameter.action) {
     data.action = e.parameter.action;
   }
+  if ((!data || !data.action) && e && e.parameter && e.parameter.payload) {
+    try {
+      if (typeof e.parameter.payload === 'string') {
+        data = JSON.parse(e.parameter.payload);
+      } else {
+        data = e.parameter.payload;
+      }
+    } catch(err) {}
+  }
+  if (!data || !data.action) { data = { action: "ping" }; }
   return handleAction(data);
 }
 
@@ -411,7 +427,7 @@ function handleAction(data) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
 
     // Ping / connection test handler
-    if (data.action === "ping") {
+    if (!data || !data.action || data.action === "ping") {
       return ContentService.createTextOutput(JSON.stringify({
         status: "success",
         message: "Koneksi Google Apps Script Aktif & Berhasil!"
