@@ -390,10 +390,24 @@ export default function AdminDashboard({
  * This script will AUTOMATICALLY create all necessary sheets and columns on its first execution!
  */
 
-function doGet(e) {
+function parsePayload(e) {
   var data = {};
-  if (e && e.parameter) {
-    data = e.parameter;
+  if (!e) return { action: "ping" };
+  
+  if (e.postData && e.postData.contents) {
+    try {
+      data = JSON.parse(e.postData.contents);
+    } catch(err) {
+      try {
+        var contents = e.postData.contents;
+        if (contents.indexOf("payload=") === 0) {
+          data = JSON.parse(decodeURIComponent(contents.substring(8)));
+        }
+      } catch(err2) {}
+    }
+  }
+  
+  if ((!data || !data.action) && e.parameter) {
     if (e.parameter.payload) {
       try {
         if (typeof e.parameter.payload === 'string') {
@@ -401,51 +415,72 @@ function doGet(e) {
         } else {
           data = e.parameter.payload;
         }
-      } catch(err) {}
+      } catch(err3) {}
+    }
+    if (!data || !data.action) {
+      data = e.parameter;
     }
   }
-  if (!data || !data.action) { data = { action: "ping" }; }
-  return handleAction(data);
+
+  if (!data || typeof data !== "object") {
+    data = { action: "ping" };
+  }
+  if (!data.action) {
+    data.action = "ping";
+  }
+  return data;
+}
+
+function doGet(e) {
+  return handleAction(parsePayload(e));
 }
 
 function doPost(e) {
-  var data = {};
+  return handleAction(parsePayload(e));
+}
+
+function getActiveSpreadsheet(data) {
+  var ss = null;
   try {
-    if (e && e.postData && e.postData.contents) {
-      data = JSON.parse(e.postData.contents);
-    }
-  } catch(err) {
-    data = {};
-  }
-  if ((!data || !data.action) && e && e.parameter && e.parameter.action) {
-    data.action = e.parameter.action;
-  }
-  if ((!data || !data.action) && e && e.parameter && e.parameter.payload) {
+    ss = SpreadsheetApp.getActiveSpreadsheet();
+  } catch(e) {}
+  if (!ss && data && data.spreadsheetId) {
     try {
-      if (typeof e.parameter.payload === 'string') {
-        data = JSON.parse(e.parameter.payload);
-      } else {
-        data = e.parameter.payload;
-      }
-    } catch(err) {}
+      ss = SpreadsheetApp.openById(data.spreadsheetId);
+    } catch(e) {}
   }
-  if (!data || !data.action) { data = { action: "ping" }; }
-  return handleAction(data);
+  if (!ss) {
+    try {
+      var files = DriveApp.getFilesByType(MimeType.GOOGLE_SHEETS);
+      if (files.hasNext()) {
+        ss = SpreadsheetApp.open(files.next());
+      }
+    } catch(e) {}
+  }
+  return ss;
+}
+
+function clearSheetDataRows(sheet, headersLength) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    var maxCol = Math.max(headersLength, sheet.getLastColumn());
+    sheet.getRange(2, 1, lastRow - 1, maxCol).clearContent();
+  }
 }
 
 function handleAction(data) {
   try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-
-    // Ping / connection test handler
-    if (!data || !data.action || data.action === "ping") {
+    if (!data) data = { action: "ping" };
+    
+    if (data.action === "ping") {
       return ContentService.createTextOutput(JSON.stringify({
         status: "success",
-        message: "Koneksi Google Apps Script Aktif & Berhasil!"
+        message: "Koneksi Google Apps Script Aktif & Berhasil!",
+        receivedAction: "ping",
+        time: new Date().toISOString()
       })).setMimeType(ContentService.MimeType.JSON);
     }
-    
-    // Direct upload handler to Google Drive for KTP photos, payment proofs, logos, and images
+
     if (data.action === "upload_file") {
       try {
         var folderName = data.folderName || "Patasnet_Drive_Uploads";
@@ -481,24 +516,28 @@ function handleAction(data) {
       }
     }
 
-    // Helper function to insert a sheet if missing and setup styling and headers
+    var ss = getActiveSpreadsheet(data);
+    if (!ss) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "error",
+        message: "Script tidak terhubung dengan Google Spreadsheet. Pastikan membuat script via Extensions -> Apps Script di dalam file Google Spreadsheet!"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     function getOrCreateSheet(name, headers) {
       var sheet = ss.getSheetByName(name);
       if (!sheet) {
         sheet = ss.insertSheet(name);
         sheet.appendRow(headers);
-        
-        // Format headers: bold, background slate, text white
         var headerRange = sheet.getRange(1, 1, 1, headers.length);
         headerRange.setFontWeight("bold");
-        headerRange.setBackground("#0f172a"); // slate-900
-        headerRange.setFontColor("#f8fafc");  // slate-50
+        headerRange.setBackground("#0f172a");
+        headerRange.setFontColor("#f8fafc");
         sheet.setFrozenRows(1);
       }
       return sheet;
     }
 
-    // Ensure all 7 master sheets exist
     var sheetSettings = getOrCreateSheet("Pengaturan_Sistem", [
       "Nama Perusahaan", "Alamat Kantor", "Teks Logo", "Warna Tema", "Tagline", "Tanggal Jatuh Tempo", "No Kontak Telepon", "Terakhir Diperbarui"
     ]);
@@ -521,41 +560,77 @@ function handleAction(data) {
       "ID Testimoni", "Nama Pengulas", "Role / Paket", "Lokasi", "Rating Bintang", "Isi Ulasan", "Tag Kategori", "Tanggal"
     ]);
 
-    if (data.action === "setup") {
-      var sheetsList = ss.getSheets();
-      sheetsList.forEach(function(sh) {
-        if (sh.getLastColumn() > 0) {
-          sh.autoResizeColumns(1, sh.getLastColumn());
-        }
-      });
+    var sheet1 = ss.getSheetByName("Sheet1") || ss.getSheetByName("Lembar1");
+    if (sheet1 && sheet1.getLastRow() <= 1) {
+      sheet1.getRange("A1").setValue("DATABASE PATASNET/TARANET WIFI TERHUBUNG!");
+      sheet1.getRange("A2").setValue("Silakan lihat tab di bagian bawah layar Google Spreadsheet untuk melihat data:");
+      sheet1.getRange("A3").setValue("1. Tab 'Pelanggan' (Data akun & pendaftaran)");
+      sheet1.getRange("A4").setValue("2. Tab 'Tagihan_Pembayaran' (Data riwayat transaksi)");
+      sheet1.getRange("A5").setValue("3. Tab 'Tiket_Dukungan' (Pengaduan & tiket)");
+      sheet1.getRange("A6").setValue("4. Tab 'Pengaturan_Sistem', 'Paket_Internet', 'Cakupan_Wilayah', 'Testimoni_Pelanggan'");
+    }
 
+    if (data.action === "setup") {
       return ContentService.createTextOutput(JSON.stringify({
         status: "success",
-        message: "Seluruh sheet (Pengaturan_Sistem, Pelanggan, Tagihan_Pembayaran, Tiket_Dukungan, Paket_Internet, Cakupan_Wilayah, Testimoni_Pelanggan) dan kolom header BERHASIL dibuat dan diformat otomatis!"
+        message: "Seluruh 7 sheet database (Pengaturan_Sistem, Pelanggan, Tagihan_Pembayaran, Tiket_Dukungan, Paket_Internet, Cakupan_Wilayah, Testimoni_Pelanggan) BERHASIL dibuat & diformat!",
+        sheetsCreated: ["Pengaturan_Sistem", "Pelanggan", "Tagihan_Pembayaran", "Tiket_Dukungan", "Paket_Internet", "Cakupan_Wilayah", "Testimoni_Pelanggan"]
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // Support retrieving the complete database to synchronize new devices
+    if (data.action === "register_customer" || data.action === "add_customer" || (data.customer && !data.customers)) {
+      var c = data.customer || data;
+      if (c && (c.name || c.id)) {
+        var coordStr = c.coordinates ? (c.coordinates[0] + ", " + c.coordinates[1]) : "-6.2088, 106.8456";
+        var custId = c.id || ("TR-" + Math.floor(1000 + Math.random()*9000));
+        sheetCustomers.appendRow([
+          custId,
+          c.name || "",
+          c.email || "",
+          c.phone || "",
+          c.address || "",
+          coordStr,
+          c.packageId || "home-50",
+          c.status || "pending",
+          c.createdAt || new Date().toISOString(),
+          c.ktpUrl || c.ktpImageUrl || ""
+        ]);
+
+        if (c.payments && c.payments.length > 0) {
+          c.payments.forEach(function(p) {
+            sheetPayments.appendRow([
+              p.id || ("PAY-" + Date.now()),
+              custId,
+              c.name || "",
+              p.date || new Date().toISOString(),
+              p.amount || 0,
+              p.status || "unpaid",
+              p.billingPeriod || "",
+              p.method || "Transfer Bank",
+              p.transactionId || "",
+              p.proofUrl || ""
+            ]);
+          });
+        }
+
+        return ContentService.createTextOutput(JSON.stringify({
+          status: "success",
+          message: "Pelanggan baru (" + (c.name || custId) + ") BERHASIL ditambahkan langsung ke sheet Pelanggan!",
+          customerId: custId
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+
     if (data.action === "load") {
-      var result = {
-        status: "success"
-      };
+      var result = { status: "success" };
       
-      // Read Pengaturan_Sistem
       if (sheetSettings && sheetSettings.getLastRow() >= 2) {
         var row = sheetSettings.getRange(2, 1, 1, 7).getValues()[0];
         result.companySettings = {
-          name: row[0],
-          address: row[1],
-          logoText: row[2],
-          themeColor: row[3],
-          tagline: row[4],
-          billingDate: row[5],
-          contactPhone: row[6]
+          name: row[0], address: row[1], logoText: row[2], themeColor: row[3], tagline: row[4], billingDate: row[5], contactPhone: row[6]
         };
       }
       
-      // Read Pelanggan & Tagihan_Pembayaran
       var customers = [];
       if (sheetCustomers && sheetCustomers.getLastRow() >= 2) {
         var rows = sheetCustomers.getRange(2, 1, sheetCustomers.getLastRow() - 1, 10).getValues();
@@ -567,17 +642,9 @@ function handleAction(data) {
               coords = [parseFloat(parts[0].trim()), parseFloat(parts[1].trim())];
             }
             customers.push({
-              id: String(r[0]),
-              name: String(r[1]),
-              email: String(r[2]),
-              phone: String(r[3]),
-              address: String(r[4]),
-              coordinates: coords,
-              packageId: String(r[6] || "home-50"),
-              status: String(r[7] || "pending"),
-              createdAt: String(r[8]),
-              ktpUrl: String(r[9] || ""),
-              payments: []
+              id: String(r[0]), name: String(r[1]), email: String(r[2]), phone: String(r[3]), address: String(r[4]),
+              coordinates: coords, packageId: String(r[6] || "home-50"), status: String(r[7] || "pending"),
+              createdAt: String(r[8]), ktpUrl: String(r[9] || ""), payments: []
             });
           }
         });
@@ -590,110 +657,77 @@ function handleAction(data) {
             var cust = customers.find(function(c) { return c.id === String(r[1]); });
             if (cust) {
               cust.payments.push({
-                id: String(r[0]),
-                date: String(r[3]),
-                amount: Number(r[4] || 0),
-                status: String(r[5] || "paid"),
-                billingPeriod: String(r[6] || ""),
-                method: String(r[7] || "Transfer Bank"),
-                transactionId: String(r[8] || ""),
-                proofUrl: String(r[9] || "")
+                id: String(r[0]), date: String(r[3]), amount: Number(r[4] || 0), status: String(r[5] || "paid"),
+                billingPeriod: String(r[6] || ""), method: String(r[7] || "Transfer Bank"), transactionId: String(r[8] || ""), proofUrl: String(r[9] || "")
               });
             }
           }
         });
       }
-      
       result.customers = customers;
-      
-      // Read Tiket_Dukungan
+
       var tickets = [];
       if (sheetTickets && sheetTickets.getLastRow() >= 2) {
         var tRows = sheetTickets.getRange(2, 1, sheetTickets.getLastRow() - 1, 8).getValues();
         tRows.forEach(function(r) {
           if (r[0]) {
             tickets.push({
-              id: String(r[0]),
-              userId: String(r[1] || ""),
-              name: String(r[2] || ""),
-              email: String(r[3] || ""),
-              phone: String(r[4] || ""),
-              message: String(r[5] || ""),
-              date: String(r[6] || ""),
-              status: String(r[7] || "open")
+              id: String(r[0]), userId: String(r[1] || ""), name: String(r[2] || ""), email: String(r[3] || ""),
+              phone: String(r[4] || ""), message: String(r[5] || ""), date: String(r[6] || ""), status: String(r[7] || "open")
             });
           }
         });
       }
       result.tickets = tickets;
-      
-      // Read Paket_Internet
+
       var packages = [];
       if (sheetPackages && sheetPackages.getLastRow() >= 2) {
         var pkgRows = sheetPackages.getRange(2, 1, sheetPackages.getLastRow() - 1, 7).getValues();
         pkgRows.forEach(function(r) {
           if (r[0]) {
             packages.push({
-              id: String(r[0]),
-              name: String(r[1]),
-              speed: String(r[2]),
-              price: Number(r[3] || 0),
-              type: String(r[4] || "home"),
-              features: r[5] ? String(r[5]).split(", ") : [],
-              popular: Boolean(r[6])
+              id: String(r[0]), name: String(r[1]), speed: String(r[2]), price: Number(r[3] || 0),
+              type: String(r[4] || "home"), features: r[5] ? String(r[5]).split(", ") : [], popular: Boolean(r[6])
             });
           }
         });
       }
       result.packages = packages;
-      
-      // Read Cakupan_Wilayah
+
       var coverage = [];
       if (sheetCoverage && sheetCoverage.getLastRow() >= 2) {
         var covRows = sheetCoverage.getRange(2, 1, sheetCoverage.getLastRow() - 1, 4).getValues();
         covRows.forEach(function(r) {
           if (r[0]) {
             coverage.push({
-              cityName: String(r[0]),
-              regionType: String(r[1] || "Kota"),
-              totalKecamatans: Number(r[2] || 0),
-              totalKelurahans: Number(r[3] || 0)
+              cityName: String(r[0]), regionType: String(r[1] || "Kota"), totalKecamatans: Number(r[2] || 0), totalKelurahans: Number(r[3] || 0)
             });
           }
         });
       }
       result.coverage = coverage;
-      
-      // Read Testimoni_Pelanggan
+
       var testimonials = [];
       if (sheetTestimonials && sheetTestimonials.getLastRow() >= 2) {
         var testiRows = sheetTestimonials.getRange(2, 1, sheetTestimonials.getLastRow() - 1, 8).getValues();
         testiRows.forEach(function(r) {
           if (r[0]) {
             testimonials.push({
-              id: String(r[0]),
-              name: String(r[1]),
-              role: String(r[2]),
-              location: String(r[3]),
-              rating: Number(r[4] || 5),
-              comment: String(r[5]),
-              category: String(r[6]),
-              date: String(r[7])
+              id: String(r[0]), name: String(r[1]), role: String(r[2]), location: String(r[3]),
+              rating: Number(r[4] || 5), comment: String(r[5]), category: String(r[6]), date: String(r[7])
             });
           }
         });
       }
       result.testimonials = testimonials;
 
-      return ContentService.createTextOutput(JSON.stringify(result))
-        .setMimeType(ContentService.MimeType.JSON);
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // 1. SYSTEM CONFIGURATION SHEET
+    var rowsWritten = 0;
+
     if (data.companySettings) {
-      if (sheetSettings.getLastRow() > 1) {
-        sheetSettings.deleteRows(2, sheetSettings.getLastRow() - 1);
-      }
+      clearSheetDataRows(sheetSettings, 8);
       sheetSettings.appendRow([
         data.companySettings.name || "Patasnet Wifi",
         data.companySettings.address || "",
@@ -704,131 +738,85 @@ function handleAction(data) {
         data.companySettings.contactPhone || "+62 899-3299-977",
         new Date().toISOString()
       ]);
+      rowsWritten++;
     }
-    
-    // 2. CUSTOMER LIST & BILLING PAYMENTS
-    if (data.customers) {
-      if (sheetCustomers.getLastRow() > 1) {
-        sheetCustomers.deleteRows(2, sheetCustomers.getLastRow() - 1);
-      }
-      if (sheetPayments.getLastRow() > 1) {
-        sheetPayments.deleteRows(2, sheetPayments.getLastRow() - 1);
-      }
-      
+
+    if (data.customers && Array.isArray(data.customers)) {
+      clearSheetDataRows(sheetCustomers, 10);
+      clearSheetDataRows(sheetPayments, 10);
       data.customers.forEach(function(c) {
         var coordStr = c.coordinates ? (c.coordinates[0] + ", " + c.coordinates[1]) : "-6.2088, 106.8456";
         sheetCustomers.appendRow([
-          c.id,
-          c.name,
-          c.email,
-          c.phone,
-          c.address,
-          coordStr,
-          c.packageId,
-          c.status,
-          c.createdAt || new Date().toISOString(),
-          c.ktpUrl || ""
+          c.id || "", c.name || "", c.email || "", c.phone || "", c.address || "", coordStr,
+          c.packageId || "home-50", c.status || "pending", c.createdAt || new Date().toISOString(), c.ktpUrl || c.ktpImageUrl || ""
         ]);
-        
+        rowsWritten++;
         if (c.payments && c.payments.length > 0) {
           c.payments.forEach(function(p) {
             sheetPayments.appendRow([
-              p.id,
-              c.id,
-              c.name,
-              p.date,
-              p.amount,
-              p.status,
-              p.billingPeriod || "",
-              p.method || "Transfer Bank",
-              p.transactionId || "",
-              p.proofUrl || ""
+              p.id || "", c.id || "", c.name || "", p.date || "", p.amount || 0, p.status || "paid",
+              p.billingPeriod || "", p.method || "Transfer Bank", p.transactionId || "", p.proofUrl || ""
             ]);
+            rowsWritten++;
           });
         }
       });
     }
-    
-    // 3. SUPPORT TICKETS
-    if (data.tickets) {
-      if (sheetTickets.getLastRow() > 1) {
-        sheetTickets.deleteRows(2, sheetTickets.getLastRow() - 1);
-      }
+
+    if (data.tickets && Array.isArray(data.tickets)) {
+      clearSheetDataRows(sheetTickets, 8);
       data.tickets.forEach(function(t) {
         sheetTickets.appendRow([
-          t.id,
-          t.userId || "",
-          t.name || "",
-          t.email || "",
-          t.phone || "",
-          t.message || "",
-          t.date || new Date().toISOString(),
-          t.status || "open"
+          t.id || "", t.userId || "", t.name || "", t.email || "", t.phone || "",
+          t.message || "", t.date || new Date().toISOString(), t.status || "open"
         ]);
+        rowsWritten++;
       });
     }
-    
-    // 4. BROADBAND PACKAGES
-    if (data.packages) {
-      if (sheetPackages.getLastRow() > 1) {
-        sheetPackages.deleteRows(2, sheetPackages.getLastRow() - 1);
-      }
+
+    if (data.packages && Array.isArray(data.packages)) {
+      clearSheetDataRows(sheetPackages, 7);
       data.packages.forEach(function(pkg) {
         sheetPackages.appendRow([
-          pkg.id,
-          pkg.name,
-          pkg.speed,
-          pkg.price,
-          pkg.type,
-          pkg.features ? pkg.features.join(", ") : "",
-          pkg.popular ? "Ya" : "Tidak"
+          pkg.id || "", pkg.name || "", pkg.speed || "", pkg.price || 0, pkg.type || "home",
+          pkg.features ? pkg.features.join(", ") : "", pkg.popular ? "Ya" : "Tidak"
         ]);
+        rowsWritten++;
       });
     }
-    
-    // 5. COVERAGE AREAS
-    if (data.coverage) {
-      if (sheetCoverage.getLastRow() > 1) {
-        sheetCoverage.deleteRows(2, sheetCoverage.getLastRow() - 1);
-      }
+
+    if (data.coverage && Array.isArray(data.coverage)) {
+      clearSheetDataRows(sheetCoverage, 4);
       data.coverage.forEach(function(cov) {
         sheetCoverage.appendRow([
-          cov.cityName,
-          cov.regionType || "Kota",
-          cov.totalKecamatans || 0,
-          cov.totalKelurahans || 0
+          cov.cityName || "", cov.regionType || "Kota", cov.totalKecamatans || 0, cov.totalKelurahans || 0
         ]);
+        rowsWritten++;
       });
     }
-    
-    // 6. CUSTOMER TESTIMONIALS
-    if (data.testimonials) {
-      if (sheetTestimonials.getLastRow() > 1) {
-        sheetTestimonials.deleteRows(2, sheetTestimonials.getLastRow() - 1);
-      }
+
+    if (data.testimonials && Array.isArray(data.testimonials)) {
+      clearSheetDataRows(sheetTestimonials, 8);
       data.testimonials.forEach(function(testi) {
         sheetTestimonials.appendRow([
-          testi.id,
-          testi.name,
-          testi.role,
-          testi.location,
-          testi.rating,
-          testi.comment,
-          testi.category,
-          testi.date
+          testi.id || "", testi.name || "", testi.role || "", testi.location || "", testi.rating || 5,
+          testi.comment || "", testi.category || "", testi.date || ""
         ]);
+        rowsWritten++;
       });
     }
 
     return ContentService.createTextOutput(JSON.stringify({
       status: "success",
-      message: "Data berhasil dicadangkan dan diperbarui ke Google Spreadsheet!"
+      message: "Data BERHASIL ditulis ke Google Spreadsheet! (Total " + rowsWritten + " baris diperbarui).",
+      rowsWritten: rowsWritten,
+      timestamp: new Date().toISOString()
     })).setMimeType(ContentService.MimeType.JSON);
 
   } catch(err) {
     return ContentService.createTextOutput(JSON.stringify({
       status: "error",
-      message: err.toString()
+      message: "Terjadi kesalahan saat menulis ke Google Spreadsheet: " + err.toString()
     })).setMimeType(ContentService.MimeType.JSON);
   }
 }`;

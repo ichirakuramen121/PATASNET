@@ -561,33 +561,18 @@ app.post('/api/subscribe', async (req, res) => {
   // Real Google Apps Script integrations proxying
   const webhookUrl = (companySettings as any).appScriptWebhookUrl || appScriptWebhookUrl;
   if (webhookUrl) {
-    try {
-      // Forward pendaftaran to google apps script to save to real google spreadsheet and drive
-      const controller = new AbortController();
-      const idTimeout = setTimeout(() => controller.abort(), 8000); // 8s timeout max
-
-      const gasResponse = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'backup',
-          id: newId,
-          name,
-          email,
-          phone,
-          address,
-          coordinates,
-          packageId,
-          rentStb,
-          ktpUrl: newCustomer.ktpImageUrl
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(idTimeout);
-    } catch (gasErr) {
+    sendToGoogleAppsScript(webhookUrl, {
+      action: 'register_customer',
+      customer: newCustomer,
+      customers: customersList,
+      companySettings
+    }).catch((gasErr) => {
       console.error('Apps Script proxy failed (Using local backup persistence):', gasErr);
-    }
+    });
   }
+
+  // Trigger debounced full backup to ensure spreadsheet stays 100% in sync
+  queueAutoBackup('new_registration');
 
   return res.json({ status: 'success', user: newCustomer });
 });

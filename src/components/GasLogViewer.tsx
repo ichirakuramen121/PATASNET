@@ -92,20 +92,49 @@ export const GasLogViewer: React.FC<GasLogViewerProps> = ({ webhookUrl, onRefres
     }
   };
 
-  const handleTestCall = async (action: 'ping' | 'load' | 'backup') => {
+  const handleTestCall = async (action: 'ping' | 'load' | 'backup' | 'register_customer') => {
     try {
       setTestingAction(action);
       setTestResultMsg(null);
+
+      let payload: any = {
+        action,
+        timestamp: new Date().toISOString(),
+        testRunner: 'LogViewerDiagnostics'
+      };
+
+      if (action === 'register_customer') {
+        payload = {
+          action: 'register_customer',
+          customer: {
+            id: `TR-TEST-${Math.floor(100 + Math.random() * 900)}`,
+            name: 'Pelanggan Tes Otomatis',
+            email: 'tes.koneksi@patasnet.id',
+            phone: '081299887766',
+            address: 'Jl. Raya Patasnet No. 88 (Data Tes)',
+            packageId: 'home-50',
+            status: 'active',
+            createdAt: new Date().toISOString().split('T')[0],
+            payments: [
+              {
+                id: `PAY-TEST-${Date.now()}`,
+                date: new Date().toISOString().split('T')[0],
+                amount: 270000,
+                status: 'paid',
+                billingPeriod: 'Agustus 2026',
+                method: 'Transfer Bank'
+              }
+            ]
+          }
+        };
+      }
+
       const res = await fetch('/api/gas-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           webhookUrl,
-          payload: {
-            action,
-            timestamp: new Date().toISOString(),
-            testRunner: 'LogViewerDiagnostics'
-          }
+          payload
         })
       });
       const data = await res.json();
@@ -114,7 +143,7 @@ export const GasLogViewer: React.FC<GasLogViewerProps> = ({ webhookUrl, onRefres
           type: 'success',
           text: `Test '${action}' BERHASIL: ${data.message || 'Respon sukses diterima dari Google Apps Script!'}`
         });
-        if (onRefreshData && action === 'load') {
+        if (onRefreshData && (action === 'load' || action === 'register_customer')) {
           onRefreshData();
         }
       } else {
@@ -123,7 +152,6 @@ export const GasLogViewer: React.FC<GasLogViewerProps> = ({ webhookUrl, onRefres
           text: `Test '${action}' GAGAL: ${data.message || 'Respon error dari Apps Script.'}`
         });
       }
-      // Refresh logs immediately
       await fetchLogs();
     } catch (err: any) {
       setTestResultMsg({
@@ -267,6 +295,15 @@ export const GasLogViewer: React.FC<GasLogViewerProps> = ({ webhookUrl, onRefres
           >
             <RefreshCw className="w-3.5 h-3.5" />
             {testingAction === 'load' ? 'Membaca Data...' : '3. Test Load Dari Spreadsheet'}
+          </button>
+
+          <button
+            onClick={() => handleTestCall('register_customer')}
+            disabled={!!testingAction}
+            className="flex items-center gap-2 px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-medium transition disabled:opacity-50"
+          >
+            <Send className="w-3.5 h-3.5" />
+            {testingAction === 'register_customer' ? 'Menulis Baris...' : '4. Test Tulis 1 Baris Pelanggan Baru'}
           </button>
         </div>
 
