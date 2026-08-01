@@ -139,6 +139,16 @@ export default function AdminDashboard({
       return;
     }
 
+    if (rawUrl.includes('/home/projects/') || rawUrl.includes('/macros/d/')) {
+      setSyncErrorMessage('URL yang Anda masukkan adalah URL Halaman Editor Apps Script, BUKAN Web App URL.\n\nCara mengambil Web App URL yang benar:\n1. Di Apps Script, klik tombol biru "Deploy" (Penerapan) -> "New deployment" (Penerapan Baru).\n2. Di bagian "Who has access", wajib pilih "Anyone" (Siapa saja).\n3. Salin URL yang diawali https://script.google.com/macros/s/... dan berakhiran /exec.');
+      return;
+    }
+
+    if (!rawUrl.includes('/macros/s/')) {
+      setSyncErrorMessage('Format Web App URL tidak valid. URL yang benar harus mengandung "/macros/s/" dan berakhiran "/exec". Silakan salin ulang dari tombol Deploy di Google Apps Script.');
+      return;
+    }
+
     const normalizedUrl = normalizeGasUrl(rawUrl);
 
     setSyncErrorMessage('');
@@ -3117,7 +3127,7 @@ function handleAction(data) {
                       <strong>Buat Deployment Web App Baru:</strong> Klik tombol <strong>Deploy (Penerapan)</strong> biru di pojok kanan atas &rarr; Pilih <strong>New deployment (Penerapan Baru)</strong>.
                     </li>
                     <li>
-                      <strong>Set Akses "Anyone" (Siapa Saja):</strong> Klik icon gerigi $\rightarrow$ Pilih <strong>Web app</strong>. Pada pilihan <strong>Who has access (Siapa yang memiliki akses)</strong>, Wajib pilih <span className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold">Anyone (Siapa saja)</span>.
+                      <strong>Set Akses "Anyone" (Siapa Saja):</strong> Klik icon gerigi &rarr; Pilih <strong>Web app</strong>. Pada pilihan <strong>Who has access (Siapa yang memiliki akses)</strong>, Wajib pilih <span className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold">Anyone (Siapa saja)</span>.
                     </li>
                     <li>
                       <strong>Salin & Tempel Web App URL Baru:</strong> Klik <strong>Deploy</strong>, izinkan akses akun Google, lalu salin Web App URL yang diberikan Google dan tempelkan ke kolom URL di bawah.

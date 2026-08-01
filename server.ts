@@ -391,6 +391,7 @@ async function triggerAutoBackup(actionType?: string) {
       packageId: c.packageId,
       status: c.status,
       createdAt: c.createdAt,
+      ktpUrl: c.ktpImageUrl || '',
       payments: c.payments || []
     })),
     tickets: supportTicketsList,
@@ -401,19 +402,11 @@ async function triggerAutoBackup(actionType?: string) {
 
   console.log(`[AUTO-BACKUP] Triggering automatic backup to Google Sheets for: ${actionType || 'data_changed'}`);
 
-  try {
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(backupPayload)
-    });
-    if (res.ok) {
-      console.log('[AUTO-BACKUP] Google Sheets backup completed successfully.');
-    } else {
-      console.error('[AUTO-BACKUP] Google Sheets backup failed. Status:', res.status);
-    }
-  } catch (err: any) {
-    console.error('[AUTO-BACKUP] Google Sheets backup request failed:', err.message);
+  const result = await sendToGoogleAppsScript(webhookUrl, backupPayload, 25000);
+  if (result.ok) {
+    console.log('[AUTO-BACKUP] Google Sheets backup completed successfully.');
+  } else {
+    console.error('[AUTO-BACKUP] Google Sheets backup failed. Status:', result.status, result.text);
   }
 }
 
@@ -706,30 +699,16 @@ async function uploadImageToGoogleDrive(base64Data: string, fileName: string, fo
   if (!webhookUrl || !base64Data || !base64Data.startsWith('data:image')) {
     return null;
   }
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'upload_file',
-        fileName,
-        base64Data,
-        folderName
-      }),
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    if (res.ok) {
-      const result: any = await res.json();
-      if (result && result.fileUrl) {
-        console.log(`[Google Drive Upload Success] Image uploaded to Drive: ${result.fileUrl}`);
-        return result.fileUrl;
-      }
-    }
-  } catch (err) {
-    console.error('[Google Drive Upload Helper Error]:', err);
+  const result = await sendToGoogleAppsScript(webhookUrl, {
+    action: 'upload_file',
+    fileName,
+    base64Data,
+    folderName
+  }, 20000);
+
+  if (result.ok && result.data && result.data.fileUrl) {
+    console.log(`[Google Drive Upload Success] Image uploaded to Drive: ${result.data.fileUrl}`);
+    return result.data.fileUrl;
   }
   return null;
 }
@@ -1291,8 +1270,22 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
     };
   }
 
+  // Check if user accidentally passed an editor URL
+  if (targetUrl.includes('/home/projects/') || targetUrl.includes('/macros/d/')) {
+    return {
+      ok: false,
+      status: 400,
+      text: '',
+      data: {
+        status: 'error',
+        message: 'URL yang Anda tempel adalah URL Halaman Editor Google Apps Script, BUKAN Web App URL.\n\nHarap salin Web App URL dari menu Deploy (Penerapan):\n1. Klik "Deploy" -> "New deployment" -> "Web app".\n2. Atur "Who has access" menjadi "Anyone" (Siapa saja).\n3. Salin Web App URL yang diawali https://script.google.com/macros/s/.../exec.'
+      },
+      targetUrl
+    };
+  }
+
   const payloadJson = JSON.stringify(payload || {});
-  const actionName = payload?.action || '';
+  const actionName = payload?.action || 'ping';
 
   // Append action & payload to query string as fallback so that even if fetch converts 302 POST -> GET during redirect,
   // doGet(e) in Apps Script STILL receives e.parameter.action and e.parameter.payload!
@@ -1301,7 +1294,7 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
   if (actionName) {
     queryParts.push(`action=${encodeURIComponent(actionName)}`);
   }
-  if (payloadJson.length < 12000) {
+  if (payloadJson.length < 8000) {
     queryParts.push(`payload=${encodeURIComponent(payloadJson)}`);
   }
   if (queryParts.length > 0) {
@@ -1312,36 +1305,17 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    // Attempt 1: Manual redirect handling to catch the 302/307 location header and POST directly to it
-    let gasRes = await fetch(urlWithQuery, {
+    // Standard fetch with redirect: 'follow'.
+    // Node.js POSTs to script.google.com/macros/s/.../exec.
+    // Apps Script executes doPost(e), returns 302 redirect to script.googleusercontent.com.
+    // Fetch follows 302 with GET to script.googleusercontent.com and reads the JSON output.
+    const gasRes = await fetch(urlWithQuery, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: payloadJson,
-      redirect: 'manual',
+      redirect: 'follow',
       signal: controller.signal
     });
-
-    if ([301, 302, 303, 307, 308].includes(gasRes.status)) {
-      const redirectLocation = gasRes.headers.get('location');
-      if (redirectLocation) {
-        // Send POST directly to the redirected location URL
-        gasRes = await fetch(redirectLocation, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: payloadJson,
-          signal: controller.signal
-        });
-      } else {
-        // Fallback with redirect follow
-        gasRes = await fetch(urlWithQuery, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: payloadJson,
-          redirect: 'follow',
-          signal: controller.signal
-        });
-      }
-    }
 
     clearTimeout(timeout);
 
@@ -1353,7 +1327,7 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
       data = null;
     }
 
-    const isSuccess = gasRes.ok && (data?.status === 'success' || (data && !data.error));
+    const isSuccess = gasRes.ok && (data?.status === 'success' || (data && !data.error && data.status !== 'error'));
 
     return {
       ok: isSuccess,
@@ -1382,7 +1356,7 @@ app.post('/api/gas-proxy', async (req, res) => {
   const result = await sendToGoogleAppsScript(rawUrl, payload, 35000);
 
   if (result.ok && result.data) {
-    // If action was 'load' or 'setup', automatically merge restored database into server memory!
+    // If action was 'load' or 'setup' or 'backup', merge data into server memory if returned!
     if (result.data.companySettings) {
       companySettings = { ...result.data.companySettings, appScriptWebhookUrl: result.targetUrl };
       saveSettings();
@@ -1416,7 +1390,7 @@ app.post('/api/gas-proxy', async (req, res) => {
   if (text.includes('Resource not found') || text.includes('404') || result.status === 404 || text.includes('<!DOCTYPE html>')) {
     return res.status(404).json({
       status: 'error',
-      message: 'Google Apps Script Ditolak ("Resource not found").\n1. Pada Google Apps Script, klik "Deploy" -> "New deployment" (Penerapan Baru) -> Jenis: "Web app".\n2. Wajib atur "Who has access" (Siapa yang memiliki akses) menjadi "Anyone" (Siapa saja).\n3. Pastikan sudah menyalin kode script terbaru dari tombol "Salin Kode Script" di dashboard admin.'
+      message: 'Google Apps Script Ditolak ("Resource not found").\n\n1. Buka Apps Script di Google Spreadsheet, pastikan tempel kode script terbaru.\n2. Klik "Deploy" (Penerapan) -> "New deployment" (Penerapan Baru) -> Jenis: "Web app".\n3. Wajib atur "Who has access" (Siapa yang memiliki akses) menjadi "Anyone" (Siapa saja).\n4. Salin Web App URL baru yang berakhiran /exec dan simpan di dashboard admin.'
     });
   }
 
@@ -1487,48 +1461,36 @@ async function syncWithAppsScriptOnServerStartup() {
     return;
   }
   console.log('[Server Startup Sync] Fetching master database from Google Sheets...', webhookUrl);
-  try {
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'load' })
-    });
-    if (res.ok) {
-      const data = await res.json() as any;
-      if (data && data.status === 'success') {
-        console.log('[Server Startup Sync] Successfully restored entire database from Google Sheets!');
-        if (data.companySettings) {
-          companySettings = { ...data.companySettings, appScriptWebhookUrl: webhookUrl };
-          saveSettings();
-        }
-        if (Array.isArray(data.customers)) {
-          customersList = data.customers;
-          saveCustomers();
-        }
-        if (Array.isArray(data.tickets)) {
-          supportTicketsList = data.tickets;
-          saveTickets();
-        }
-        if (Array.isArray(data.packages)) {
-          packagesList = data.packages;
-          savePackages();
-        }
-        if (Array.isArray(data.coverage)) {
-          coverageList = data.coverage;
-          saveCoverage();
-        }
-        if (Array.isArray(data.testimonials)) {
-          testimonialsList = data.testimonials;
-          saveTestimonials();
-        }
-      } else {
-        console.warn('[Server Startup Sync] Google Sheets answered but status is not success.');
-      }
-    } else {
-      console.warn('[Server Startup Sync] Google Sheets connection rejected with status:', res.status);
+  const result = await sendToGoogleAppsScript(webhookUrl, { action: 'load' }, 20000);
+  if (result.ok && result.data) {
+    const data = result.data;
+    if (data.companySettings) {
+      companySettings = { ...data.companySettings, appScriptWebhookUrl: webhookUrl };
+      saveSettings();
     }
-  } catch (err: any) {
-    console.error('[Server Startup Sync] Failed to connect to Google Sheets:', err.message || err);
+    if (Array.isArray(data.customers) && data.customers.length > 0) {
+      customersList = data.customers;
+      saveCustomers();
+    }
+    if (Array.isArray(data.tickets) && data.tickets.length > 0) {
+      supportTicketsList = data.tickets;
+      saveTickets();
+    }
+    if (Array.isArray(data.packages) && data.packages.length > 0) {
+      packagesList = data.packages;
+      savePackages();
+    }
+    if (Array.isArray(data.coverage) && data.coverage.length > 0) {
+      coverageList = data.coverage;
+      saveCoverage();
+    }
+    if (Array.isArray(data.testimonials) && data.testimonials.length > 0) {
+      testimonialsList = data.testimonials;
+      saveTestimonials();
+    }
+    console.log('[Server Startup Sync] Database synced successfully from Google Sheets!');
+  } else {
+    console.warn('[Server Startup Sync] Could not sync database on startup:', result.text);
   }
 }
 
