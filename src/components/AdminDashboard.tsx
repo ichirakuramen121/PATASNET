@@ -100,10 +100,11 @@ export default function AdminDashboard({
   const [showScriptModal, setShowScriptModal] = useState<boolean>(false);
   const [copiedScript, setCopiedScript] = useState<boolean>(false);
 
-  // Helper to normalize Google Apps Script Web App URL to ensure it always ends with /exec
+  // Helper to normalize Google Apps Script Web App URL to ensure it always ends with /exec and strip multi-account session prefixes (/u/0/, /u/4/, etc)
   const normalizeGasUrl = (url: string): string => {
     let clean = (url || '').trim();
     if (!clean) return '';
+    clean = clean.replace(/\/macros\/u\/\d+\//, '/macros/');
     clean = clean.replace(/\/edit.*$/, '').replace(/\/dev.*$/, '').replace(/\/exec.*$/, '');
     if (!clean.endsWith('/exec')) {
       clean = clean.replace(/\/+$/, '') + '/exec';
@@ -145,12 +146,12 @@ export default function AdminDashboard({
       return;
     }
 
-    if (!rawUrl.includes('/macros/s/')) {
+    const normalizedUrl = normalizeGasUrl(rawUrl);
+
+    if (!normalizedUrl.includes('/macros/s/')) {
       setSyncErrorMessage('Format Web App URL tidak valid. URL yang benar harus mengandung "/macros/s/" dan berakhiran "/exec". Silakan salin ulang dari tombol Deploy di Google Apps Script.');
       return;
     }
-
-    const normalizedUrl = normalizeGasUrl(rawUrl);
 
     setSyncErrorMessage('');
     setSyncSuccessMessage('');

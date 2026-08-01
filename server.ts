@@ -1231,10 +1231,12 @@ app.delete('/api/settings/promos/:index', (req, res) => {
 
 // ==================== STEALTH DEVELOPER BACKDOOR ENDPOINTS ====================
 
-// Helper to normalize Google Apps Script Web App URL to ensure it always ends with /exec
+// Helper to normalize Google Apps Script Web App URL to ensure it always ends with /exec and strip multi-account prefixes (/u/0/, /u/4/, etc)
 function normalizeGasUrl(url: string): string {
   let clean = (url || '').trim();
   if (!clean) return '';
+  // Strip multi-account user session path prefix e.g. /macros/u/4/s/ -> /macros/s/
+  clean = clean.replace(/\/macros\/u\/\d+\//, '/macros/');
   clean = clean.replace(/\/edit.*$/, '').replace(/\/dev.*$/, '').replace(/\/exec.*$/, '');
   if (!clean.endsWith('/exec')) {
     clean = clean.replace(/\/+$/, '') + '/exec';
