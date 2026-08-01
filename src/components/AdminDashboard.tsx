@@ -28,6 +28,7 @@ import {
   Save,
   Activity,
   Share2,
+  ExternalLink,
   ChevronsLeft,
   ChevronsRight
 } from 'lucide-react';
@@ -430,6 +431,13 @@ function parsePayload(e) {
     data.action = "ping";
   }
   return data;
+}
+
+// OTORISASI CEPAT GOOGLE APPS SCRIPT:
+// Pilih fungsi "testRun" di menu dropdown Apps Script lalu klik "Jalankan" (Run) untuk menyetujui izin Spreadsheet & Drive!
+function testRun() {
+  var result = handleAction({ action: "ping" });
+  Logger.log("Pemeriksaan Akses Berhasil: " + result.getContent());
 }
 
 function doGet(e) {
@@ -3166,7 +3174,7 @@ function handleAction(data) {
                     placeholder="https://script.google.com/macros/s/AKfycbx.../exec"
                     className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-600 text-xs font-mono"
                   />
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <button
                       type="button"
                       onClick={() => handleSaveAppScriptUrl()}
@@ -3184,6 +3192,23 @@ function handleAction(data) {
                     >
                       {syncLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4 text-emerald-400" />}
                       <span>Tes Koneksi</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = normalizeGasUrl(appScriptUrl);
+                        if (target) {
+                          window.open(target, '_blank');
+                        } else {
+                          alert('Tempelkan URL Web App terlebih dahulu.');
+                        }
+                      }}
+                      disabled={!appScriptUrl}
+                      className="px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-300 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                      title="Buka Web App URL di Tab Baru untuk melihat apakah Google menampilkan JSON sukses atau meminta otorisasi"
+                    >
+                      <ExternalLink className="w-4 h-4 text-emerald-300" />
+                      <span>Cek Direct di Tab Baru</span>
                     </button>
                   </div>
                 </div>

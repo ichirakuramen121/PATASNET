@@ -1340,7 +1340,7 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    const gasRes = await fetch(urlWithQuery, {
+    let gasRes = await fetch(urlWithQuery, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: payloadJson,
@@ -1348,9 +1348,7 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
       signal: controller.signal
     });
 
-    clearTimeout(timeout);
-
-    const text = await gasRes.text();
+    let text = await gasRes.text();
     let data: any = null;
     try {
       data = JSON.parse(text);
@@ -1358,7 +1356,34 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
       data = null;
     }
 
-    const isSuccess = gasRes.ok && (data?.status === 'success' || (data && !data.error && data.status !== 'error'));
+    let isSuccess = gasRes.ok && (data?.status === 'success' || (data && !data.error && data.status !== 'error'));
+
+    // FALLBACK TO GET REQUEST if POST returned 404 or "Resource not found" or HTML document
+    if (!isSuccess && (text.includes('Resource not found') || gasRes.status === 404 || text.includes('<!DOCTYPE html>'))) {
+      try {
+        const getRes = await fetch(urlWithQuery, {
+          method: 'GET',
+          redirect: 'follow',
+          signal: controller.signal
+        });
+        const getText = await getRes.text();
+        let getData: any = null;
+        try {
+          getData = JSON.parse(getText);
+        } catch (e) {}
+
+        if (getRes.ok && (getData?.status === 'success' || (getData && !getData.error && getData.status !== 'error'))) {
+          gasRes = getRes;
+          text = getText;
+          data = getData;
+          isSuccess = true;
+        }
+      } catch (getErr) {
+        // keep original post response
+      }
+    }
+
+    clearTimeout(timeout);
 
     addGasLog({
       action: actionName,
