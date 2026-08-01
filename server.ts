@@ -1257,29 +1257,79 @@ function normalizeGasUrl(url: string): string {
   return clean;
 }
 
+// Global memory log for Google Apps Script API calls to diagnose issues
+interface GasLogEntry {
+  id: string;
+  timestamp: string;
+  action: string;
+  targetUrl: string;
+  status: number;
+  ok: boolean;
+  payload: any;
+  responseText: string;
+  responseData: any;
+  durationMs: number;
+}
+const gasLogs: GasLogEntry[] = [];
+
+function addGasLog(entry: Omit<GasLogEntry, 'id' | 'timestamp'>) {
+  const newLog: GasLogEntry = {
+    id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: new Date().toISOString(),
+    ...entry
+  };
+  gasLogs.unshift(newLog);
+  if (gasLogs.length > 100) {
+    gasLogs.pop();
+  }
+}
+
 // Master helper to send requests to Google Apps Script Web App without CORS or 302 redirect payload drops
 async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 35000) {
+  const startTime = Date.now();
   const targetUrl = normalizeGasUrl(rawUrl);
   if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
+    const errObj = { status: 'error', message: 'URL Web App Google Apps Script belum diisi atau tidak valid (harus diawali https://script.google.com/).' };
+    addGasLog({
+      action: payload?.action || 'unknown',
+      targetUrl: rawUrl || '',
+      status: 400,
+      ok: false,
+      payload,
+      responseText: JSON.stringify(errObj),
+      responseData: errObj,
+      durationMs: Date.now() - startTime
+    });
     return {
       ok: false,
       status: 400,
       text: '',
-      data: { status: 'error', message: 'URL Web App Google Apps Script belum diisi atau tidak valid (harus diawali https://script.google.com/).' },
+      data: errObj,
       targetUrl: ''
     };
   }
 
   // Check if user accidentally passed an editor URL
   if (targetUrl.includes('/home/projects/') || targetUrl.includes('/macros/d/')) {
+    const errObj = {
+      status: 'error',
+      message: 'URL yang Anda tempel adalah URL Halaman Editor Google Apps Script, BUKAN Web App URL.\n\nHarap salin Web App URL dari menu Deploy (Penerapan):\n1. Klik "Deploy" -> "New deployment" -> "Web app".\n2. Atur "Who has access" menjadi "Anyone" (Siapa saja).\n3. Salin Web App URL yang diawali https://script.google.com/macros/s/.../exec.'
+    };
+    addGasLog({
+      action: payload?.action || 'unknown',
+      targetUrl,
+      status: 400,
+      ok: false,
+      payload,
+      responseText: JSON.stringify(errObj),
+      responseData: errObj,
+      durationMs: Date.now() - startTime
+    });
     return {
       ok: false,
       status: 400,
       text: '',
-      data: {
-        status: 'error',
-        message: 'URL yang Anda tempel adalah URL Halaman Editor Google Apps Script, BUKAN Web App URL.\n\nHarap salin Web App URL dari menu Deploy (Penerapan):\n1. Klik "Deploy" -> "New deployment" -> "Web app".\n2. Atur "Who has access" menjadi "Anyone" (Siapa saja).\n3. Salin Web App URL yang diawali https://script.google.com/macros/s/.../exec.'
-      },
+      data: errObj,
       targetUrl
     };
   }
@@ -1287,8 +1337,6 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
   const payloadJson = JSON.stringify(payload || {});
   const actionName = payload?.action || 'ping';
 
-  // Append action & payload to query string as fallback so that even if fetch converts 302 POST -> GET during redirect,
-  // doGet(e) in Apps Script STILL receives e.parameter.action and e.parameter.payload!
   let urlWithQuery = targetUrl;
   const queryParts: string[] = [];
   if (actionName) {
@@ -1305,10 +1353,6 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    // Standard fetch with redirect: 'follow'.
-    // Node.js POSTs to script.google.com/macros/s/.../exec.
-    // Apps Script executes doPost(e), returns 302 redirect to script.googleusercontent.com.
-    // Fetch follows 302 with GET to script.googleusercontent.com and reads the JSON output.
     const gasRes = await fetch(urlWithQuery, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -1329,6 +1373,17 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
 
     const isSuccess = gasRes.ok && (data?.status === 'success' || (data && !data.error && data.status !== 'error'));
 
+    addGasLog({
+      action: actionName,
+      targetUrl,
+      status: gasRes.status,
+      ok: isSuccess,
+      payload,
+      responseText: text,
+      responseData: data,
+      durationMs: Date.now() - startTime
+    });
+
     return {
       ok: isSuccess,
       status: gasRes.status,
@@ -1338,15 +1393,36 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
     };
   } catch (err: any) {
     console.error('sendToGoogleAppsScript Error:', err);
+    const errObj = { status: 'error', message: err.message || 'Gagal menghubungi Google Apps Script.' };
+    addGasLog({
+      action: actionName,
+      targetUrl,
+      status: 500,
+      ok: false,
+      payload,
+      responseText: err.message || '',
+      responseData: errObj,
+      durationMs: Date.now() - startTime
+    });
     return {
       ok: false,
       status: 500,
       text: err.message || '',
-      data: { status: 'error', message: err.message || 'Gagal menghubungi Google Apps Script.' },
+      data: errObj,
       targetUrl
     };
   }
 }
+
+// Get detailed Google Apps Script diagnostic logs
+app.get('/api/gas-logs', (req, res) => {
+  res.json({ status: 'success', logs: gasLogs });
+});
+
+app.delete('/api/gas-logs', (req, res) => {
+  gasLogs.length = 0;
+  res.json({ status: 'success', message: 'Log Google Apps Script berhasil dibersihkan.' });
+});
 
 // Proxy Google Apps Script requests safely from Node.js backend to bypass browser CORS preflight errors
 app.post('/api/gas-proxy', async (req, res) => {

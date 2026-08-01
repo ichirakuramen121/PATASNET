@@ -35,6 +35,7 @@ import { CustomerUser, PaymentRecord, SupportTicket } from '../types';
 import { generateCustomerPDFReport, generateAdminMonthlyPDFReport } from '../lib/pdfGenerator';
 import { PACKAGES } from './Home';
 import Logo from './Logo';
+import { GasLogViewer } from './GasLogViewer';
 import {
   AreaChart,
   Area,
@@ -3268,6 +3269,9 @@ function handleAction(data) {
                 </button>
               </div>
             </div>
+
+            {/* Detailed Log Viewer Component for Google Apps Script API Diagnostics */}
+            <GasLogViewer webhookUrl={appScriptUrl} onRefreshData={handleLinkAndSyncDatabase} />
 
             {/* Google Apps Script Code Exporter & Tutorial Card */}
             <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm space-y-4">

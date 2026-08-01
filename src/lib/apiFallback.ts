@@ -5,6 +5,17 @@ import { DEFAULT_COMPANY_SETTINGS } from './defaultCompanySettings';
 
 const ORIGINAL_FETCH = window.fetch;
 
+let fallbackGasLogs: any[] = [];
+
+export function addFallbackGasLog(entry: any) {
+  fallbackGasLogs.unshift({
+    id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: new Date().toISOString(),
+    ...entry
+  });
+  if (fallbackGasLogs.length > 100) fallbackGasLogs.pop();
+}
+
 // Helper to encrypt password matching Node.js SHA-256 hex digest
 async function sha256(message: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(message);
@@ -918,6 +929,17 @@ async function simulateApi(url: string, init?: RequestInit): Promise<Response> {
     if (cov) setStorage('coverage_areas', cov);
     if (testm) setStorage('testimonials', testm);
     return createJSONResponse({ status: 'success', message: 'Raw database override success!' });
+  }
+
+  // 27. GET /api/gas-logs
+  if (path === '/api/gas-logs' && method === 'GET') {
+    return createJSONResponse({ status: 'success', logs: fallbackGasLogs });
+  }
+
+  // 28. DELETE /api/gas-logs
+  if (path === '/api/gas-logs' && method === 'DELETE') {
+    fallbackGasLogs = [];
+    return createJSONResponse({ status: 'success', message: 'Log berhasil dibersihkan.' });
   }
 
   // Default fallback for unmatched api routes
