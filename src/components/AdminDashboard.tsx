@@ -460,10 +460,23 @@ function getActiveSpreadsheet(data) {
   }
   if (!ss) {
     try {
+      var files = DriveApp.getFilesByName("Database_Patasnet_WiFi");
+      if (files.hasNext()) {
+        ss = SpreadsheetApp.open(files.next());
+      }
+    } catch(e) {}
+  }
+  if (!ss) {
+    try {
       var files = DriveApp.getFilesByType(MimeType.GOOGLE_SHEETS);
       if (files.hasNext()) {
         ss = SpreadsheetApp.open(files.next());
       }
+    } catch(e) {}
+  }
+  if (!ss) {
+    try {
+      ss = SpreadsheetApp.create("Database_Patasnet_WiFi");
     } catch(e) {}
   }
   return ss;

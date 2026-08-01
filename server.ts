@@ -411,25 +411,32 @@ async function triggerAutoBackup(actionType?: string) {
 }
 
 // Helper saves to ensure files are written back
+const saveCustomersQuietly = () => saveJSON(CUSTOMERS_FILE, customersList);
+const saveTicketsQuietly = () => saveJSON(TICKETS_FILE, supportTicketsList);
+const saveCoverageQuietly = () => saveJSON(COVERAGE_FILE, coverageList);
+const savePackagesQuietly = () => saveJSON(PACKAGES_FILE, packagesList);
+const saveTestimonialsQuietly = () => saveJSON(TESTIMONIALS_FILE, testimonialsList);
+const saveSettingsQuietly = () => saveJSON(SETTINGS_FILE, companySettings);
+
 const saveCustomers = () => {
-  saveJSON(CUSTOMERS_FILE, customersList);
+  saveCustomersQuietly();
   queueAutoBackup('save_customers');
 };
 const saveTickets = () => {
-  saveJSON(TICKETS_FILE, supportTicketsList);
+  saveTicketsQuietly();
   queueAutoBackup('save_tickets');
 };
 const savePasswords = () => saveJSON(PASSWORDS_FILE, passwordsDb);
 const saveCoverage = () => {
-  saveJSON(COVERAGE_FILE, coverageList);
+  saveCoverageQuietly();
   queueAutoBackup('save_coverage');
 };
 const savePackages = () => {
-  saveJSON(PACKAGES_FILE, packagesList);
+  savePackagesQuietly();
   queueAutoBackup('save_packages');
 };
 const saveTestimonials = () => {
-  saveJSON(TESTIMONIALS_FILE, testimonialsList);
+  saveTestimonialsQuietly();
   queueAutoBackup('save_testimonials');
 };
 
@@ -1447,27 +1454,27 @@ app.post('/api/gas-proxy', async (req, res) => {
     // If action was 'load' or 'setup' or 'backup', merge data into server memory if returned!
     if (result.data.companySettings) {
       companySettings = { ...result.data.companySettings, appScriptWebhookUrl: result.targetUrl };
-      saveSettings();
+      saveSettingsQuietly();
     }
     if (Array.isArray(result.data.customers)) {
       customersList = result.data.customers;
-      saveCustomers();
+      saveCustomersQuietly();
     }
     if (Array.isArray(result.data.tickets)) {
       supportTicketsList = result.data.tickets;
-      saveTickets();
+      saveTicketsQuietly();
     }
     if (Array.isArray(result.data.packages)) {
       packagesList = result.data.packages;
-      savePackages();
+      savePackagesQuietly();
     }
     if (Array.isArray(result.data.coverage)) {
       coverageList = result.data.coverage;
-      saveCoverage();
+      saveCoverageQuietly();
     }
     if (Array.isArray(result.data.testimonials)) {
       testimonialsList = result.data.testimonials;
-      saveTestimonials();
+      saveTestimonialsQuietly();
     }
 
     return res.json(result.data);
@@ -1541,44 +1548,43 @@ app.post('/api/dev/db/save', (req, res) => {
   res.json({ status: 'success', message: 'Raw database override success!' });
 });
 
-// Server-side Apps Script sync on boot
+// Server-side Apps Script sync on boot and periodic background polling
 async function syncWithAppsScriptOnServerStartup() {
   const webhookUrl = process.env.VITE_APP_SCRIPT_URL || process.env.APP_SCRIPT_URL || (companySettings as any)?.appScriptWebhookUrl || '';
   if (!webhookUrl) {
-    console.log('[Server Startup Sync] No Google Apps Script URL environment variable or setting configured.');
     return;
   }
-  console.log('[Server Startup Sync] Fetching master database from Google Sheets...', webhookUrl);
+  console.log('[Server Sync] Checking master database from Google Sheets...', webhookUrl);
   const result = await sendToGoogleAppsScript(webhookUrl, { action: 'load' }, 20000);
   if (result.ok && result.data) {
     const data = result.data;
     if (data.companySettings) {
       companySettings = { ...data.companySettings, appScriptWebhookUrl: webhookUrl };
-      saveSettings();
+      saveSettingsQuietly();
     }
     if (Array.isArray(data.customers) && data.customers.length > 0) {
       customersList = data.customers;
-      saveCustomers();
+      saveCustomersQuietly();
     }
     if (Array.isArray(data.tickets) && data.tickets.length > 0) {
       supportTicketsList = data.tickets;
-      saveTickets();
+      saveTicketsQuietly();
     }
     if (Array.isArray(data.packages) && data.packages.length > 0) {
       packagesList = data.packages;
-      savePackages();
+      savePackagesQuietly();
     }
     if (Array.isArray(data.coverage) && data.coverage.length > 0) {
       coverageList = data.coverage;
-      saveCoverage();
+      saveCoverageQuietly();
     }
     if (Array.isArray(data.testimonials) && data.testimonials.length > 0) {
       testimonialsList = data.testimonials;
-      saveTestimonials();
+      saveTestimonialsQuietly();
     }
-    console.log('[Server Startup Sync] Database synced successfully from Google Sheets!');
+    console.log('[Server Sync] Database successfully synced with Google Sheets!');
   } else {
-    console.warn('[Server Startup Sync] Could not sync database on startup:', result.text);
+    console.warn('[Server Sync] Could not sync database:', result.text ? result.text.substring(0, 100) : 'no response');
   }
 }
 
@@ -1602,6 +1608,10 @@ async function startServer() {
     console.log(`Server running on port ${PORT}`);
     // Sync with Google Sheets as soon as server starts
     syncWithAppsScriptOnServerStartup();
+    // Real-time automatic background polling every 25 seconds
+    setInterval(() => {
+      syncWithAppsScriptOnServerStartup();
+    }, 25000);
   });
 }
 
