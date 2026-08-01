@@ -230,16 +230,42 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Parse deep link params for prospective customers (e.g. ?page=subscribe&pkg=home-20m)
+    // Parse deep link params for prospective customers (e.g. ?page=subscribe&pkg=home-20m&s=...)
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const pageParam = urlParams.get('page');
       const pkgParam = urlParams.get('pkg');
+      const sParam = urlParams.get('s') || urlParams.get('cfg');
+
       if (pkgParam) {
         setSelectedPackageId(pkgParam);
       }
       if (pageParam === 'subscribe' || pageParam === 'daftar') {
         setCurrentPage('subscribe');
+      }
+
+      // Instant settings hydration from URL if opened on a new device via shared link
+      if (sParam) {
+        try {
+          const decodedJson = decodeURIComponent(atob(decodeURIComponent(sParam)));
+          const parsed = JSON.parse(decodedJson);
+          if (parsed && (parsed.n || parsed.name)) {
+            const urlSettings = {
+              name: parsed.n || parsed.name,
+              logoText: parsed.lt || parsed.logoText,
+              themeColor: parsed.tc || parsed.themeColor || 'blue',
+              logoUrl: parsed.lu || parsed.logoUrl,
+              tagline: parsed.tg || parsed.tagline,
+              contactPhone: parsed.ph || parsed.contactPhone,
+              address: companySettings.address
+            };
+            setCompanySettings(prev => ({ ...prev, ...urlSettings }));
+            localStorage.setItem('db_company_settings', JSON.stringify(urlSettings));
+            saveCompanySettingsToIDB(urlSettings);
+          }
+        } catch (err) {
+          console.warn('Could not decode URL settings parameter:', err);
+        }
       }
     } catch (e) {
       console.error('URL params parsing failed:', e);

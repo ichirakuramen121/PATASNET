@@ -8,7 +8,11 @@ interface ShareModalProps {
   companySettings: {
     name: string;
     logoText: string;
+    themeColor?: string;
+    logoUrl?: string;
+    tagline?: string;
     contactPhone?: string;
+    address?: string;
   };
   packages?: WifiPackage[];
 }
@@ -19,10 +23,26 @@ export default function ShareModal({ isOpen, onClose, companySettings, packages 
 
   if (!isOpen) return null;
 
+  // Build lightweight encoded settings string for instant hydration when opened on any device
+  let settingsQueryParam = '';
+  try {
+    const compactSettings = {
+      n: companySettings.name,
+      lt: companySettings.logoText,
+      tc: companySettings.themeColor || 'blue',
+      lu: companySettings.logoUrl || '',
+      tg: companySettings.tagline || '',
+      ph: companySettings.contactPhone || ''
+    };
+    settingsQueryParam = `&s=${encodeURIComponent(btoa(encodeURIComponent(JSON.stringify(compactSettings))))}`;
+  } catch (err) {
+    console.error('Failed to encode settings query param:', err);
+  }
+
   const baseUrl = window.location.origin;
   const targetUrl = selectedPkgId && selectedPkgId !== 'all'
-    ? `${baseUrl}/?page=subscribe&pkg=${selectedPkgId}`
-    : `${baseUrl}/?ref=share`;
+    ? `${baseUrl}/?page=subscribe&pkg=${selectedPkgId}${settingsQueryParam}`
+    : `${baseUrl}/?ref=share${settingsQueryParam}`;
 
   const companyName = companySettings.name || 'Patas.Net';
 
