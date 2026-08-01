@@ -401,7 +401,7 @@ function parsePayload(e) {
       data = JSON.parse(e.postData.contents);
     } catch(err) {
       try {
-        var contents = e.postData.contents;
+        var contents = String(e.postData.contents);
         if (contents.indexOf("payload=") === 0) {
           data = JSON.parse(decodeURIComponent(contents.substring(8)));
         }
@@ -409,17 +409,26 @@ function parsePayload(e) {
     }
   }
   
-  if ((!data || !data.action) && e.parameter) {
+  if ((!data || !data.action || data.action === "ping") && e.parameter) {
     if (e.parameter.payload) {
       try {
-        if (typeof e.parameter.payload === 'string') {
-          data = JSON.parse(e.parameter.payload);
+        var pStr = e.parameter.payload;
+        if (typeof pStr === "string") {
+          data = JSON.parse(pStr);
         } else {
-          data = e.parameter.payload;
+          data = pStr;
         }
-      } catch(err3) {}
+      } catch(err3) {
+        try {
+          data = JSON.parse(decodeURIComponent(e.parameter.payload));
+        } catch(err4) {}
+      }
     }
-    if (!data || !data.action) {
+    if ((!data || !data.action) && e.parameter.action) {
+      if (!data || typeof data !== "object") data = {};
+      data.action = e.parameter.action;
+    }
+    if ((!data || !data.action) && typeof e.parameter === "object") {
       data = e.parameter;
     }
   }
@@ -453,9 +462,15 @@ function getActiveSpreadsheet(data) {
   try {
     ss = SpreadsheetApp.getActiveSpreadsheet();
   } catch(e) {}
-  if (!ss && data && data.spreadsheetId) {
+  if (!ss) {
     try {
-      ss = SpreadsheetApp.openById(data.spreadsheetId);
+      ss = SpreadsheetApp.getActive();
+    } catch(e) {}
+  }
+  if (!ss && data && (data.spreadsheetId || data.spreadsheetUrl)) {
+    try {
+      if (data.spreadsheetId) ss = SpreadsheetApp.openById(data.spreadsheetId);
+      else if (data.spreadsheetUrl) ss = SpreadsheetApp.openByUrl(data.spreadsheetUrl);
     } catch(e) {}
   }
   if (!ss) {
@@ -464,19 +479,6 @@ function getActiveSpreadsheet(data) {
       if (files.hasNext()) {
         ss = SpreadsheetApp.open(files.next());
       }
-    } catch(e) {}
-  }
-  if (!ss) {
-    try {
-      var files = DriveApp.getFilesByType(MimeType.GOOGLE_SHEETS);
-      if (files.hasNext()) {
-        ss = SpreadsheetApp.open(files.next());
-      }
-    } catch(e) {}
-  }
-  if (!ss) {
-    try {
-      ss = SpreadsheetApp.create("Database_Patasnet_WiFi");
     } catch(e) {}
   }
   return ss;

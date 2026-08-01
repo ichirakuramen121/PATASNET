@@ -1347,13 +1347,37 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
+    // Send POST with redirect: 'manual' so Node fetch doesn't automatically convert POST to GET on 302 redirect
     let gasRes = await fetch(urlWithQuery, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: payloadJson,
-      redirect: 'follow',
+      redirect: 'manual',
       signal: controller.signal
     });
+
+    // If Google Apps Script returned 302 Found redirect (standard GAS behavior), follow it manually with POST
+    if (gasRes.status === 301 || gasRes.status === 302 || gasRes.status === 303 || gasRes.status === 307 || gasRes.status === 308) {
+      const redirectUrl = gasRes.headers.get('location');
+      if (redirectUrl) {
+        gasRes = await fetch(redirectUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: payloadJson,
+          redirect: 'follow',
+          signal: controller.signal
+        });
+      } else {
+        // Fallback: follow standard redirect
+        gasRes = await fetch(urlWithQuery, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: payloadJson,
+          redirect: 'follow',
+          signal: controller.signal
+        });
+      }
+    }
 
     let text = await gasRes.text();
     let data: any = null;
@@ -1365,8 +1389,8 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
 
     let isSuccess = gasRes.ok && (data?.status === 'success' || (data && !data.error && data.status !== 'error'));
 
-    // FALLBACK TO GET REQUEST if POST returned 404 or "Resource not found" or HTML document
-    if (!isSuccess && (text.includes('Resource not found') || gasRes.status === 404 || text.includes('<!DOCTYPE html>'))) {
+    // FALLBACK TO GET REQUEST if POST returned error, HTML document, or missing data
+    if (!isSuccess) {
       try {
         const getRes = await fetch(urlWithQuery, {
           method: 'GET',
@@ -1386,7 +1410,7 @@ async function sendToGoogleAppsScript(rawUrl: string, payload: any, timeoutMs = 
           isSuccess = true;
         }
       } catch (getErr) {
-        // keep original post response
+        // keep original response
       }
     }
 
